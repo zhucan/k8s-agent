@@ -1,0 +1,29 @@
+{
+  "clusters": [
+    {
+      "name": "jobss",
+      "context": "kubernetes-admin@cluster.local",
+      "kubeconfig": "kubeconfigs/jobss.yaml"
+    },
+    {
+      "name": "job",
+      "context": "kubernetes-admin@cluster.local",
+      "kubeconfig": "kubeconfigs/job.yaml"
+    },
+    {
+      "name": "cicd",
+      "context": "kubernetes-admin@cluster.local",
+      "kubeconfig": "kubeconfigs/cicd.yaml"
+    },
+    {
+      "name": "jobv2",
+      "context": "kubernetes-admin@cluster.local",
+      "kubeconfig": "kubeconfigs/jobv2.yaml"
+    },
+    {
+      "name": "drtraining",
+      "context": "kubernetes-admin@cluster.local",
+      "kubeconfig": "kubeconfigs/drtraining.yaml"
+    }
+  ]
+}
