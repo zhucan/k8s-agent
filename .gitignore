@@ -1,0 +1,24 @@
+# Secrets & local config
+.env
+.env.local
+*.local
+
+# Kubeconfigs (contain credentials)
+kubeconfig/
+*.kubeconfig
+
+# SSH keys
+id_rsa
+id_rsa.*
+*.pem
+*.key
+
+# Build artifacts
+bin/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store

@@ -1,0 +1,20 @@
+{
+  "clusters": [
+    {
+      "name": "开发集群",
+      "context": "kubernetes-admin@dev-cluster"
+    },
+    {
+      "name": "测试集群",
+      "context": "kubernetes-admin@test-cluster"
+    },
+    {
+      "name": "预发布集群",
+      "context": "kubernetes-admin@staging-cluster"
+    },
+    {
+      "name": "生产集群",
+      "context": "kubernetes-admin@prod-cluster"
+    }
+  ]
+}
