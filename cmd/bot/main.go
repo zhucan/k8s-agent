@@ -108,7 +108,13 @@ func main() {
 	// 创建 WebSocket 长连接客户端
 	wsClient := larkws.NewClient(appID, appSecret,
 		larkws.WithEventHandler(eventHandler),
-		larkws.WithLogLevel(larkcore.LogLevelWarn))
+		larkws.WithLogLevel(larkcore.LogLevelError),
+		larkws.WithOnReconnecting(func() {
+			log.Println("[lark] WebSocket disconnected, reconnecting...")
+		}),
+		larkws.WithOnReconnected(func() {
+			log.Println("[lark] WebSocket reconnected successfully")
+		}))
 
 	// 启动 WebSocket 长连接（阻塞主线程）
 	log.Println("🚀 Starting WebSocket long connection to Feishu...")
