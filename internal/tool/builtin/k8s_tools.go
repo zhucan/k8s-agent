@@ -14,6 +14,7 @@ import (
 	"github.com/k8s-inspect/internal/nodes"
 )
 
+
 // ListNodes lists the whitelist nodes (= current cluster nodes). No SSH required.
 type ListNodes struct {
 	CS    *kubernetes.Clientset
@@ -58,6 +59,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 		Hostname    string   `json:"hostname,omitempty"`
 		Roles       []string `json:"roles,omitempty"`
 		Ready       bool     `json:"ready"`
+		Cordoned    bool     `json:"cordoned"`  // true only when explicitly cordoned via kubectl cordon
 		Schedulable bool     `json:"schedulable"`
 		Healthy     bool     `json:"healthy"`
 	}
@@ -81,6 +83,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 		}
 
 		schedulable := !node.Spec.Unschedulable
+		cordoned := node.Spec.Unschedulable // explicitly set by kubectl cordon
 		healthy := ready && schedulable
 
 		if ready {
@@ -129,6 +132,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 			Hostname:    hostname,
 			Roles:       roles,
 			Ready:       ready,
+			Cordoned:    cordoned,
 			Schedulable: schedulable,
 			Healthy:     healthy,
 		})
@@ -181,19 +185,19 @@ func (t *NodeStatus) Execute(ctx context.Context, input map[string]any) (string,
 		return "", fmt.Errorf("get node %s: %w", n.Name, err)
 	}
 	out := struct {
-		Name          string                                       `json:"name"`
-		InternalIP    string                                       `json:"internal_ip"`
-		Unschedulable bool                                         `json:"unschedulable"`
-		Conditions    map[corev1.NodeConditionType]string          `json:"conditions"`
-		Capacity      map[corev1.ResourceName]string               `json:"capacity"`
-		Allocatable   map[corev1.ResourceName]string               `json:"allocatable"`
+		Name        string                              `json:"name"`
+		InternalIP  string                              `json:"internal_ip"`
+		Cordoned    bool                                `json:"cordoned"`
+		Conditions  map[corev1.NodeConditionType]string `json:"conditions"`
+		Capacity    map[corev1.ResourceName]string      `json:"capacity"`
+		Allocatable map[corev1.ResourceName]string      `json:"allocatable"`
 	}{
-		Name:          node.Name,
-		InternalIP:    n.InternalIP,
-		Unschedulable: node.Spec.Unschedulable,
-		Conditions:    map[corev1.NodeConditionType]string{},
-		Capacity:      map[corev1.ResourceName]string{},
-		Allocatable:   map[corev1.ResourceName]string{},
+		Name:        node.Name,
+		InternalIP:  n.InternalIP,
+		Cordoned:    node.Spec.Unschedulable,
+		Conditions:  map[corev1.NodeConditionType]string{},
+		Capacity:    map[corev1.ResourceName]string{},
+		Allocatable: map[corev1.ResourceName]string{},
 	}
 	for _, c := range node.Status.Conditions {
 		out.Conditions[c.Type] = string(c.Status)

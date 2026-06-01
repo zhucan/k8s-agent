@@ -189,7 +189,7 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 
 	// Handle the incoming query
 	log.Printf("[lark] Processing query: %q", text)
-	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	start := time.Now()

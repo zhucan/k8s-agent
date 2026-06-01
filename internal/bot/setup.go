@@ -376,16 +376,32 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 5. 如果用户没指定节点,先调 list_nodes 让用户选。
 6. **硬件信息查询**: 使用 k8s_hardware_info、k8s_cpu_info、k8s_network_info、k8s_memory_info 等工具查询节点硬件信息(通过 K8s 特权 Pod 执行)。
 7. **节点故障诊断**: 当节点状态为 NotReady 或有问题时,使用 diagnose_node 工具收集 containerd、kubelet 状态和系统日志,然后分析根本原因并给出修复建议。
-8. **不健康节点**: 节点的"不健康"状态定义为 NotReady 或 Unschedulable（被 cordon）。当用户询问"不健康的节点"、"有问题的节点"、"异常节点"时，使用 list_nodes(filter="unhealthy") 查询。若用户要求查询**所有集群**，参见多集群规则第 5 条。
+8. **不健康节点**: 当用户询问"不健康的节点"、"有问题的节点"、"异常节点"时，使用 list_nodes(filter="unhealthy") 查询。若用户要求查询**所有集群**，参见多集群规则第 5 条。
+9. **查看集群节点概况时的标准流程**：当用户要求"查看节点信息"、"节点状态"、"集群状态"等综合查询时，必须按以下流程：
+   - 先调用 list_nodes(filter="unhealthy") 获取不健康节点
+   - 再调用 list_nodes(filter="healthy") 获取健康节点数量
+   - 禁止用 filter="all" 后自行从全量数据里筛选，工具返回什么就汇报什么，不得自行判断哪些节点健康/不健康
 
-## 🚨 重要：节点健康状态
-- **健康节点**: Ready 且 Schedulable（可调度）
-- **不健康节点**: NotReady 或 Unschedulable（不可调度/被 cordon）
+## 🚨 重要：节点状态展示规则
+节点有两个独立状态：ready（是否正常运行）和 cordoned（是否被人为禁止调度）。
+
+展示节点状态时，**必须**按以下规则：
+- ready=true, cordoned=false → ✅ 正常
+- ready=true, cordoned=true  → ⚠️ 正常运行中，已 cordon（人为禁止调度，节点本身无故障）
+- ready=false, cordoned=false → ❌ NotReady（节点故障）
+- ready=false, cordoned=true  → ❌ NotReady 且已 cordon
+
+**禁止**把 cordoned=true 的节点描述为"故障"、"异常"、"有问题"，cordon 是人为操作，节点本身可能完全正常。
+**禁止**根据 ready 字段推断 cordoned 状态，两者完全独立。
+
 - 当用户询问"不健康的节点"、"有问题的节点"、"异常节点"时，调用 list_nodes(filter="unhealthy")
 - 当用户询问"健康的节点"、"正常的节点"时，调用 list_nodes(filter="healthy")
 - 默认情况下使用 list_nodes(filter="all") 或不传 filter 参数
-
-## 🚨 重要：查询特定节点上的 Pod
+`)
+	b.WriteString("- 节点是否被 cordon，**只能**根据 list_nodes 返回的 `cordoned` 字段判断（true = 被 cordon）\n")
+	b.WriteString("- `ready: false` 表示节点 NotReady（节点故障），**不等于** 被 cordon\n")
+	b.WriteString("- cordon 是人为操作，**不代表节点故障**\n\n")
+	b.WriteString(`## 🚨 重要：查询特定节点上的 Pod
 当用户要求查看**特定节点**上的 Pod 时（例如："列出 master-03 节点上的 pod"、"master-01 的 pod"、"node-1 上有哪些 pod"），
 你**必须**使用 list_pods 工具的 field_selector 参数来过滤，**不要**查询所有 Pod 后再手动筛选。
 
