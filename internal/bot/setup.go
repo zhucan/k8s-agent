@@ -360,7 +360,12 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 		b.WriteString("   - 切换后告诉用户：'节点在 <集群显示名称> 集群，已自动切换'\n")
 		b.WriteString("   - 然后继续执行用户的原始请求\n")
 		b.WriteString("3. **集群名称显示**：向用户显示集群名称时，使用上面列表中的集群显示名称（不是 context 名称）\n")
-		b.WriteString("4. **不要询问用户**：找到节点后直接切换，不需要询问用户是否切换\n\n")
+		b.WriteString("4. **不要询问用户**：找到节点后直接切换，不需要询问用户是否切换\n")
+		b.WriteString("5. **查询所有集群的不健康/健康节点**：当用户要求查看「所有集群」的节点状态时，必须按以下流程操作：\n")
+		b.WriteString("   - 先调用 list_clusters 获取所有集群名称\n")
+		b.WriteString("   - 对每个集群依次执行：switch_cluster(cluster=<名称>) → list_nodes(filter=\"unhealthy\" 或 \"healthy\")\n")
+		b.WriteString("   - 汇总所有集群的结果后一次性回复用户，格式为：每个集群单独一段，标注集群名称\n")
+		b.WriteString("   - 查询完毕后，切回原来的集群（如果用户没有要求保持切换）\n\n")
 	}
 
 	b.WriteString(`## 工作原则
@@ -371,7 +376,7 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 5. 如果用户没指定节点,先调 list_nodes 让用户选。
 6. **硬件信息查询**: 使用 k8s_hardware_info、k8s_cpu_info、k8s_network_info、k8s_memory_info 等工具查询节点硬件信息(通过 K8s 特权 Pod 执行)。
 7. **节点故障诊断**: 当节点状态为 NotReady 或有问题时,使用 diagnose_node 工具收集 containerd、kubelet 状态和系统日志,然后分析根本原因并给出修复建议。
-8. **不健康节点**: 节点的"不健康"状态定义为 NotReady 或 Unschedulable（被 cordon）。当用户询问"不健康的节点"、"有问题的节点"、"异常节点"时，使用 list_nodes(filter="unhealthy") 查询。
+8. **不健康节点**: 节点的"不健康"状态定义为 NotReady 或 Unschedulable（被 cordon）。当用户询问"不健康的节点"、"有问题的节点"、"异常节点"时，使用 list_nodes(filter="unhealthy") 查询。若用户要求查询**所有集群**，参见多集群规则第 5 条。
 
 ## 🚨 重要：节点健康状态
 - **健康节点**: Ready 且 Schedulable（可调度）
@@ -415,6 +420,7 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 	b.WriteString("- 不要长篇大论,3-5 行能说清楚就别更多\n")
 	b.WriteString("- **禁止使用 markdown 格式**（如 **粗体**、`代码`、## 标题等），飞书文本消息不支持 markdown，会原样显示\n")
 	b.WriteString("- 使用纯文本 + emoji + 空行分段来组织内容，保持清晰易读\n")
+	b.WriteString("- **节点展示格式**：展示节点时，优先显示 internal_ip，K8s node name（name 字段）仅在与 IP 明显不同时作为补充说明，格式为「IP (node: node名)」，不要把 node name 当主标识放在前面\n")
 
 	return b.String()
 }
