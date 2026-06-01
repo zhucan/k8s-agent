@@ -1,189 +1,188 @@
-# K8s-Inspect
+# K8s-Agent
 
-基于 Claude AI 的 Kubernetes 集群智能运维助手，支持通过飞书机器人或命令行进行自然语言交互。
+An intelligent Kubernetes cluster operations assistant powered by Claude AI, supporting natural language interaction via Feishu (Lark) bot or command line.
 
-**🆕 现在支持非 LLM 模式！** 可以不使用 AI，直接调用工具，适合脚本集成和自动化场景。
+**🆕 No-LLM mode supported!** You can invoke tools directly without AI, suitable for scripting and automation.
 
-## ✨ 核心特性
+## ✨ Features
 
-- 🤖 **飞书集成** - 通过飞书 WebSocket 长连接，无需公网 IP
-- 🗣️ **自然语言** - 用自然语言管理集群，无需记忆命令（LLM 模式）
-- 🔧 **直接工具调用** - 不使用 AI，直接调用工具，返回结构化数据（非 LLM 模式）
-- 🔄 **多集群管理** - 支持管理和动态切换多个 Kubernetes 集群
-- 📊 **节点监控** - 查看节点状态、资源使用、硬件信息
-- 🔍 **智能诊断** - 自动分析节点故障，提供修复建议
-- 🚀 **无需 SSH** - 通过 K8s 特权 Pod 执行诊断，更安全
-- ⏰ **定时巡检** - 自动检测不健康节点并发送飞书告警
-- 🔥 **热加载** - kubeconfigs 目录文件变化时自动加载/卸载集群
+- 🤖 **Feishu Integration** - WebSocket long connection, no public IP required
+- 🗣️ **Natural Language** - Manage clusters with natural language, no need to memorize commands (LLM mode)
+- 🔧 **Direct Tool Invocation** - Call tools directly without AI, returns structured data (no-LLM mode)
+- 🔄 **Multi-Cluster Management** - Manage and dynamically switch between multiple Kubernetes clusters
+- 📊 **Node Monitoring** - View node status, resource usage, and hardware info
+- 🔍 **Intelligent Diagnostics** - Automatically analyze node failures and provide remediation suggestions
+- 🚀 **No SSH Required** - Run diagnostics via K8s privileged Pods, more secure
+- ⏰ **Scheduled Health Checks** - Auto-detect unhealthy nodes and send Feishu alerts
+- 🔥 **Hot Reload** - Automatically load/unload clusters when kubeconfig files change
 
-## 🎯 两种工作模式
+## 🎯 Two Operation Modes
 
-### 📋 模式 1: LLM 自然语言交互模式（默认）
-- 使用 AI 理解自然语言查询
-- 适合人工交互和探索性查询
-- 需要 ANTHROPIC_API_KEY
+### 📋 Mode 1: LLM Natural Language Mode (default)
+- Uses AI to understand natural language queries
+- Suitable for interactive and exploratory use
+- Requires `ANTHROPIC_API_KEY`
 
-### 🔧 模式 2: 直接工具调用模式（--no-llm）
-- 不使用 LLM，直接调用工具
-- 返回结构化 JSON 数据
-- 适合脚本集成、API 调用、自动化场景
-- **不需要 ANTHROPIC_API_KEY**
-- 响应速度快，无 API 调用成本
+### 🔧 Mode 2: Direct Tool Invocation Mode (--no-llm)
+- No LLM, invokes tools directly
+- Returns structured JSON data
+- Suitable for scripting, API calls, and automation
+- **No `ANTHROPIC_API_KEY` required**
+- Fast response, no API call cost
 
-详细使用方法请查看 [NO_LLM_MODE.md](./NO_LLM_MODE.md)
+See [NO_LLM_MODE.md](./NO_LLM_MODE.md) for details.
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-### 1. 环境准备
+### 1. Environment Setup
 
-创建 `.env` 文件：
+Create a `.env` file:
 
 ```bash
-# Anthropic API 配置（仅 LLM 模式需要）
+# Anthropic API (LLM mode only)
 ANTHROPIC_API_KEY=sk-ant-xxx
 
-# 飞书应用配置（仅 bot 模式需要）
+# Feishu app credentials (bot mode only)
 LARK_APP_ID=cli_xxx
 LARK_APP_SECRET=xxx
 
-# 定时巡检告警（可选）
-LARK_ALERT_CHAT_ID=oc_xxx                    # 告警群 Chat ID
-LARK_ALERT_MENTION_EMAILS=user@company.com   # 要 @的人的邮箱
-LARK_ALERT_CRON=0 10 * * *                   # 巡检时间
+# Scheduled alert (optional)
+LARK_ALERT_CHAT_ID=oc_xxx                    # Alert group Chat ID
+LARK_ALERT_MENTION_EMAILS=user@company.com   # Email addresses to @mention
+LARK_ALERT_CRON=0 10 * * *                   # Check schedule
 ```
 
-**注意：** 如果使用 `--no-llm` 模式，不需要配置 `ANTHROPIC_API_KEY`
+**Note:** `ANTHROPIC_API_KEY` is not required when using `--no-llm`.
 
-### 2. 配置集群
+### 2. Configure Clusters
 
-**单集群模式：**
+**Single-cluster mode:**
 ```bash
-# 使用默认 kubeconfig
 export KUBECONFIG=~/.kube/config
 ```
 
-**多集群模式：**
+**Multi-cluster mode:**
 ```bash
-# 准备 kubeconfig 文件（文件名即为集群名）
+# Place kubeconfig files in the kubeconfigs directory (filename = cluster name)
 mkdir -p kubeconfigs
 cp /path/to/test-kubeconfig kubeconfigs/test.yaml
 cp /path/to/cdn-kubeconfig kubeconfigs/cdn.yaml
 
-# clusters.json 会在启动时自动生成/同步
+# clusters.json is auto-generated/synced on startup
 ```
 
-### 3. 编译和运行
+### 3. Build and Run
 
 ```bash
-# 编译
+# Build
 go build -o bin/bot ./cmd/bot
 go build -o bin/cli ./cmd/cli
 
-# 运行飞书 Bot（LLM 模式，多集群）
+# Run Feishu bot (LLM mode, multi-cluster)
 ./bin/bot --multi-cluster --cluster-config clusters.json
 
-# 运行飞书 Bot（非 LLM 模式，多集群）
+# Run Feishu bot (no-LLM mode, multi-cluster)
 ./bin/bot --no-llm --multi-cluster --cluster-config clusters.json
 
-# 运行 CLI（LLM 模式，单集群）
+# Run CLI (LLM mode, single-cluster)
 ./bin/cli --kubeconfig ~/.kube/config
 
-# 运行 CLI（非 LLM 模式，单集群）
+# Run CLI (no-LLM mode, single-cluster)
 ./bin/cli --no-llm --kubeconfig ~/.kube/config
 ```
 
-## 💬 使用示例
+## 💬 Usage Examples
 
-### LLM 模式（自然语言交互）
+### LLM Mode (Natural Language)
 
-#### 飞书机器人
+#### Feishu Bot
 
-在飞书群聊中 @机器人：
+Mention the bot in a Feishu group:
 
 ```
-# 多集群管理
-列出所有集群
-切换到 cdn 集群
+# Multi-cluster management
+List all clusters
+Switch to cdn cluster
 
-# 节点查询
-列出所有节点
-列出所有不健康的节点
-查看 master-01 节点状态
+# Node queries
+List all nodes
+List all unhealthy nodes
+Check status of master-01
 
-# Pod 管理
-列出 default 命名空间的 pod
-master-03 节点上有哪些 pod
+# Pod management
+List pods in the default namespace
+Which pods are on master-03?
 
-# 故障诊断
-诊断 master-01 节点
-分析 10.1.1.83 节点为什么 NotReady
+# Diagnostics
+Diagnose master-01
+Why is 10.1.1.83 NotReady?
 
-# 硬件信息
-查看 master-01 的 CPU 信息
-master-02 的内存使用情况
+# Hardware info
+Show CPU info for master-01
+Memory usage on master-02
 ```
 
-#### 命令行工具
+#### CLI
 
 ```bash
-# 交互模式
+# Interactive mode
 ./bin/cli --multi-cluster --cluster-config clusters.json
 
-# 单次查询
-./bin/cli --once "列出所有节点"
-./bin/cli --once "列出所有不健康的节点"
-./bin/cli --once "查看 master-01 节点状态"
+# Single query
+./bin/cli --once "List all nodes"
+./bin/cli --once "List all unhealthy nodes"
+./bin/cli --once "Check status of master-01"
 ```
 
-### 非 LLM 模式（直接工具调用）
+### No-LLM Mode (Direct Tool Invocation)
 
-#### 飞书机器人
+#### Feishu Bot
 
-在飞书群聊中 @机器人，发送工具命令：
+Mention the bot and send tool commands:
 
 ```
-# 列出所有集群
+# List all clusters
 list_clusters
 
-# 切换集群
+# Switch cluster
 switch_cluster {"cluster":"cdn"}
 
-# 列出所有节点
+# List all nodes
 list_nodes
 
-# 列出不健康的节点
+# List unhealthy nodes
 list_nodes {"filter":"unhealthy"}
 
-# 查看节点状态
+# Check node status
 node_status {"node":"master-01"}
 
-# 诊断节点
+# Diagnose node
 diagnose_node {"node":"10.1.1.83"}
 ```
 
-#### 命令行工具
+#### CLI
 
 ```bash
-# 查看帮助
+# Show help
 ./bin/cli --help
 
-# 单次工具调用
+# Single tool call
 ./bin/cli --no-llm --multi-cluster --tool list_clusters
 ./bin/cli --no-llm --kubeconfig config.yaml --tool list_nodes --input '{"filter":"unhealthy"}'
 ./bin/cli --no-llm --kubeconfig config.yaml --tool node_status --input '{"node":"master-01"}'
 
-# 交互模式
+# Interactive mode
 ./bin/cli --no-llm --multi-cluster --cluster-config clusters.json
 tool> list_nodes {"filter":"unhealthy"}
 tool> switch_cluster {"cluster":"prod"}
 tool> node_status {"node":"master-01"}
 ```
 
-#### 脚本集成示例
+#### Script Integration
 
 ```bash
 #!/bin/bash
-# 监控不健康节点的脚本
+# Monitor unhealthy nodes
 
 UNHEALTHY=$(./bin/cli --no-llm --kubeconfig config.yaml \
   --tool list_nodes --input '{"filter":"unhealthy"}' 2>/dev/null)
@@ -191,79 +190,79 @@ UNHEALTHY=$(./bin/cli --no-llm --kubeconfig config.yaml \
 UNHEALTHY_COUNT=$(echo "$UNHEALTHY" | grep "Unhealthy:" | awk '{print $4}')
 
 if [ "$UNHEALTHY_COUNT" -gt 0 ]; then
-    echo "⚠️ 发现 $UNHEALTHY_COUNT 个不健康节点"
+    echo "⚠️ Found $UNHEALTHY_COUNT unhealthy nodes"
     echo "$UNHEALTHY"
-    # 发送告警...
+    # Send alert...
 fi
 ```
 
-## 📚 文档
+## 📚 Documentation
 
-- [非 LLM 模式指南](NO_LLM_MODE.md) - 直接工具调用模式详细说明
-- [部署指南](DEPLOY.md) - Docker、Kubernetes 部署方案
-- [功能特性](FEATURES.md) - 详细功能列表
-- [多集群管理](MULTI_CLUSTER.md) - 多集群配置和使用
-- [自然语言指南](docs/NATURAL_LANGUAGE.md) - 自然语言交互示例
-- [添加集群](docs/ADD_CLUSTER.md) - 集群管理（自动同步与热加载）
+- [No-LLM Mode Guide](NO_LLM_MODE.md) - Direct tool invocation details
+- [Deployment Guide](DEPLOY.md) - Docker and Kubernetes deployment
+- [Features](FEATURES.md) - Full feature list
+- [Multi-Cluster Management](MULTI_CLUSTER.md) - Multi-cluster configuration and usage
+- [Natural Language Guide](docs/NATURAL_LANGUAGE.md) - Natural language interaction examples
+- [Add Cluster](docs/ADD_CLUSTER.md) - Cluster management (auto-sync and hot reload)
 
-## 🛠️ 可用功能
+## 🛠️ Available Capabilities
 
-### 基础功能
-- ✅ 列出节点（含状态）
-- ✅ 查看节点详细信息
-- ✅ Cordon/Uncordon 节点
-- ✅ 列出 Pod（支持按节点、命名空间筛选）
-- ✅ 列出 Namespace
+### Core
+- ✅ List nodes (with status)
+- ✅ View node details
+- ✅ Cordon/Uncordon nodes
+- ✅ List Pods (filter by node or namespace)
+- ✅ List Namespaces
 
-### 多集群功能
-- ✅ 列出所有集群
-- ✅ 动态切换集群
-- ✅ 自动同步 kubeconfigs 目录
-- ✅ 运行时热加载（新增/删除/修改集群无需重启）
+### Multi-Cluster
+- ✅ List all clusters
+- ✅ Dynamic cluster switching
+- ✅ Auto-sync kubeconfigs directory
+- ✅ Runtime hot reload (add/remove/update clusters without restart)
 
-### 告警功能
-- ✅ 定时巡检不健康节点
-- ✅ 飞书卡片告警（支持 @相关人员）
-- ✅ 支持邮箱配置 @ 人（自动解析为 Open ID）
+### Alerting
+- ✅ Scheduled unhealthy node checks
+- ✅ Feishu card alerts (with @mention support)
+- ✅ Email-based @mention (auto-resolved to Open ID)
 
-### 诊断功能
-- ✅ 节点故障诊断（通过 K8s Pod）
-- ✅ 查看硬件信息（CPU、内存、网络、磁盘）
-- ✅ 分析 containerd、kubelet 状态
-- ✅ 查看系统日志
+### Diagnostics
+- ✅ Node fault diagnosis (via K8s Pod)
+- ✅ Hardware info (CPU, memory, network, disk)
+- ✅ containerd and kubelet status analysis
+- ✅ System log collection
 
-## 🏗️ 项目结构
+## 🏗️ Project Structure
 
 ```
 .
 ├── cmd/
-│   ├── bot/              # 飞书机器人服务
-│   └── cli/              # 命令行工具
+│   ├── bot/              # Feishu bot service
+│   └── cli/              # Command-line tool
 ├── internal/
-│   ├── alert/            # 定时巡检告警
-│   ├── bot/              # Bot 核心逻辑
-│   ├── cluster/          # 集群管理（含自动同步和热加载）
-│   ├── llm/              # LLM 集成（Claude）
-│   ├── k8s/              # Kubernetes 客户端
-│   ├── lark/             # 飞书消息卡片
-│   ├── nodes/            # 节点注册表
-│   └── tool/             # 工具函数
-│       └── builtin/      # 内置工具
-├── kubeconfigs/          # 集群 kubeconfig 文件（放入即自动加载）
-└── clusters.json         # 集群列表配置（自动维护）
+│   ├── alert/            # Scheduled health check alerts
+│   ├── bot/              # Bot core logic
+│   ├── cluster/          # Cluster management (auto-sync and hot reload)
+│   ├── llm/              # LLM integration (Claude)
+│   ├── k8s/              # Kubernetes client
+│   ├── lark/             # Feishu message cards
+│   ├── nodes/            # Node registry
+│   └── tool/             # Tool framework
+│       └── builtin/      # Built-in tools
+├── kubeconfigs/          # Cluster kubeconfig files (auto-loaded on add)
+└── clusters.json         # Cluster list config (auto-maintained)
 ```
 
-## 🔒 安全特性
+## 🔒 Security
 
-- **无需 SSH** - 通过 K8s 原生 API 和特权 Pod 执行诊断
-- **节点白名单** - 只能访问集群内已注册的节点
-- **命令硬编码** - LLM 不能执行任意命令，只能调用预定义工具
-- **RBAC 控制** - 支持 Kubernetes RBAC 权限管理
+- **No SSH** - Diagnostics run via K8s native API and privileged Pods
+- **Node Whitelist** - Only registered cluster nodes are accessible
+- **Hardcoded Commands** - LLM cannot execute arbitrary commands; only predefined tools are available
+- **RBAC** - Kubernetes RBAC permission management supported
 
-## 🤝 贡献
+## 🤝 Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Issues and Pull Requests are welcome!
 
-## 📄 许可证
+## 📄 License
 
 MIT License

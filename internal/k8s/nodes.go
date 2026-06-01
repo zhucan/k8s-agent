@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// NodeInfo: 节点元数据 + 关键 conditions,供 inspector 使用
+// NodeInfo holds node metadata and key conditions for use by inspectors.
 type NodeInfo struct {
 	Name        string
 	InternalIP  string

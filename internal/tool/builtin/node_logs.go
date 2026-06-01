@@ -11,7 +11,7 @@ import (
 	"github.com/k8s-inspect/internal/nodes"
 )
 
-// CollectLogs 收集指定节点的系统日志、kubelet 日志或 containerd 日志
+// CollectLogs collects system, kubelet, or containerd logs from a specified node.
 type CollectLogs struct {
 	CS         *kubernetes.Clientset
 	RestConfig *rest.Config
@@ -30,16 +30,16 @@ func (t *CollectLogs) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"node": map[string]any{
 				"type":        "string",
-				"description": "节点标识 (名称、IP 或 hostname)",
+				"description": "Node identifier (name, IP, or hostname)",
 			},
 			"type": map[string]any{
 				"type":        "string",
-				"description": "日志类型: system(系统日志), kubelet, containerd, all(全部)",
+				"description": "Log type: system (system journal), kubelet, containerd, all (all types)",
 				"enum":        []string{"system", "kubelet", "containerd", "all"},
 			},
 			"lines": map[string]any{
 				"type":        "number",
-				"description": "收集的日志行数 (默认 200)",
+				"description": "Number of log lines to collect (default: 200)",
 			},
 		},
 		"required": []string{"node"},
@@ -70,8 +70,8 @@ func (t *CollectLogs) Execute(ctx context.Context, input map[string]any) (string
 	executor := &NodeShellExecutor{CS: t.CS, RestConfig: t.RestConfig, Nodes: t.Nodes}
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("📋 节点 %s (%s) 日志收集\n", n.Name, n.InternalIP))
-	sb.WriteString(fmt.Sprintf("类型: %s | 行数: %d\n", logType, lines))
+	sb.WriteString(fmt.Sprintf("📋 Node %s (%s) — Log Collection\n", n.Name, n.InternalIP))
+	sb.WriteString(fmt.Sprintf("Type: %s | Lines: %d\n", logType, lines))
 	sb.WriteString("═══════════════════════════════\n\n")
 
 	type logTask struct {
@@ -84,11 +84,11 @@ func (t *CollectLogs) Execute(ctx context.Context, input map[string]any) (string
 	if logType == "system" || logType == "all" {
 		tasks = append(tasks,
 			logTask{
-				name: "系统日志 (journalctl)",
-				cmd:  fmt.Sprintf("journalctl --no-pager -n %d --priority=err..emerg 2>/dev/null || echo '(journalctl 不可用)'", lines),
+				name: "System Journal (journalctl)",
+				cmd:  fmt.Sprintf("journalctl --no-pager -n %d --priority=err..emerg 2>/dev/null || echo '(journalctl unavailable)'", lines),
 			},
 			logTask{
-				name: "内核日志 (dmesg)",
+				name: "Kernel Log (dmesg)",
 				cmd:  fmt.Sprintf("dmesg --time-format iso 2>/dev/null | tail -n %d || dmesg | tail -n %d", lines, lines),
 			},
 		)
@@ -96,15 +96,15 @@ func (t *CollectLogs) Execute(ctx context.Context, input map[string]any) (string
 
 	if logType == "kubelet" || logType == "all" {
 		tasks = append(tasks, logTask{
-			name: "Kubelet 日志",
-			cmd:  fmt.Sprintf("journalctl --no-pager -n %d -u kubelet 2>/dev/null || echo '(kubelet 日志不可用)'", lines),
+			name: "Kubelet Logs",
+			cmd:  fmt.Sprintf("journalctl --no-pager -n %d -u kubelet 2>/dev/null || echo '(kubelet logs unavailable)'", lines),
 		})
 	}
 
 	if logType == "containerd" || logType == "all" {
 		tasks = append(tasks, logTask{
-			name: "Containerd 日志",
-			cmd:  fmt.Sprintf("journalctl --no-pager -n %d -u containerd 2>/dev/null || echo '(containerd 日志不可用)'", lines),
+			name: "Containerd Logs",
+			cmd:  fmt.Sprintf("journalctl --no-pager -n %d -u containerd 2>/dev/null || echo '(containerd logs unavailable)'", lines),
 		})
 	}
 
@@ -112,9 +112,9 @@ func (t *CollectLogs) Execute(ctx context.Context, input map[string]any) (string
 		sb.WriteString(fmt.Sprintf("=== %s ===\n", task.name))
 		output, err := executor.execOnNodeViaPod(ctx, n.Name, task.cmd)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("❌ 收集失败: %v\n", err))
+			sb.WriteString(fmt.Sprintf("❌ Collection failed: %v\n", err))
 		} else if strings.TrimSpace(output) == "" {
-			sb.WriteString("(无输出)\n")
+			sb.WriteString("(no output)\n")
 		} else {
 			sb.WriteString(output)
 			if !strings.HasSuffix(output, "\n") {

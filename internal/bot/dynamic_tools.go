@@ -8,9 +8,9 @@ import (
 	"github.com/k8s-inspect/internal/tool/builtin"
 )
 
-// 动态工具包装器 - 在执行时从 ClusterManager 获取当前集群的资源
+// Dynamic tool wrappers — fetch resources from the current cluster in ClusterManager at execution time.
 
-// dynamicListNodes 动态获取当前集群的节点列表
+// dynamicListNodes dynamically retrieves the node list from the current cluster.
 type dynamicListNodes struct {
 	mgr *cluster.Manager
 }

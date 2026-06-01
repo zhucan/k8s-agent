@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// LabelNodeResources 按 label selector 汇总节点的 CPU / Memory / GPU 总量
+// LabelNodeResources sums CPU, Memory, and GPU capacity across nodes matching a label selector.
 type LabelNodeResources struct {
 	CS *kubernetes.Clientset
 }

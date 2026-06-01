@@ -18,10 +18,10 @@ import (
 )
 
 type Config struct {
-	ChatID        string   // 告警群 Chat ID
-	MentionIDs    []string // 要 @的人的 Open ID
-	MentionEmails []string // 要 @的人的邮箱，启动时会自动解析为 Open ID
-	CronExpr      string   // cron 表达式 (目前只用 HH:MM)
+	ChatID        string   // Alert group Chat ID
+	MentionIDs    []string // Open IDs to @mention
+	MentionEmails []string // Email addresses to @mention (resolved to Open IDs at startup)
+	CronExpr      string   // Cron expression (currently only HH:MM is used)
 	LarkClient    *lark.Client
 	ClusterMgr    *cluster.Manager
 }
@@ -47,7 +47,7 @@ func Start(ctx context.Context, cfg Config) {
 		return
 	}
 
-	// 将邮箱解析为 Open ID 并合并
+	// Resolve email addresses to Open IDs and merge into MentionIDs
 	if len(cfg.MentionEmails) > 0 {
 		resolved := resolveEmails(ctx, cfg.LarkClient, cfg.MentionEmails)
 		cfg.MentionIDs = append(cfg.MentionIDs, resolved...)
@@ -163,14 +163,14 @@ func buildAlertCard(results []clusterResult, hasUnhealthy bool, mentionIDs []str
 	builder := larkutil.NewCardBuilder()
 
 	if hasUnhealthy {
-		builder.SetHeader("集群节点健康巡检 - 发现异常", "red")
+		builder.SetHeader("Cluster Node Health Check — Issues Found", "red")
 	} else {
-		builder.SetHeader("集群节点健康巡检 - 全部正常", "green")
+		builder.SetHeader("Cluster Node Health Check — All Healthy", "green")
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("**巡检时间:** %s\n", time.Now().Format("2006-01-02 15:04:05")))
-	sb.WriteString(fmt.Sprintf("**集群数量:** %d\n", len(results)))
+	sb.WriteString(fmt.Sprintf("**Check Time:** %s\n", time.Now().Format("2006-01-02 15:04:05")))
+	sb.WriteString(fmt.Sprintf("**Clusters:** %d\n", len(results)))
 	builder.AddMarkdown(sb.String())
 	builder.AddDivider()
 
@@ -178,20 +178,20 @@ func buildAlertCard(results []clusterResult, hasUnhealthy bool, mentionIDs []str
 		var section strings.Builder
 
 		if cr.Error != "" {
-			section.WriteString(fmt.Sprintf("**集群: %s** ❌ 连接失败\n", cr.Name))
-			section.WriteString(fmt.Sprintf("错误: %s\n", cr.Error))
+			section.WriteString(fmt.Sprintf("**Cluster: %s** ❌ Connection failed\n", cr.Name))
+			section.WriteString(fmt.Sprintf("Error: %s\n", cr.Error))
 			builder.AddMarkdown(section.String())
 			builder.AddDivider()
 			continue
 		}
 
 		if len(cr.UnhealthyNodes) == 0 {
-			section.WriteString(fmt.Sprintf("**集群: %s** ✅ 全部健康 (%d 节点)\n", cr.Name, cr.Total))
+			section.WriteString(fmt.Sprintf("**Cluster: %s** ✅ All healthy (%d nodes)\n", cr.Name, cr.Total))
 			builder.AddMarkdown(section.String())
 			continue
 		}
 
-		section.WriteString(fmt.Sprintf("**集群: %s** ⚠️ 发现 %d 个异常节点 (共 %d 节点)\n\n",
+		section.WriteString(fmt.Sprintf("**Cluster: %s** ⚠️ %d unhealthy node(s) out of %d\n\n",
 			cr.Name, len(cr.UnhealthyNodes), cr.Total))
 
 		for _, n := range cr.UnhealthyNodes {
@@ -218,10 +218,10 @@ func buildAlertCard(results []clusterResult, hasUnhealthy bool, mentionIDs []str
 			mentionParts = append(mentionParts, fmt.Sprintf("<at id=%s></at>", openID))
 			_ = i
 		}
-		builder.AddMarkdown("**相关人员:** " + strings.Join(mentionParts, " ") + " 请关注")
+		builder.AddMarkdown("**Attention:** " + strings.Join(mentionParts, " ") + " please review")
 	}
 
-	builder.AddNote(fmt.Sprintf("由 k8s-inspect 自动巡检 | %s", time.Now().Format("2006-01-02")))
+	builder.AddNote(fmt.Sprintf("Auto health check by k8s-agent | %s", time.Now().Format("2006-01-02")))
 
 	content, err := builder.Build()
 	if err != nil {
@@ -296,7 +296,6 @@ func resolveEmails(ctx context.Context, client *lark.Client, emails []string) []
 		}
 	}
 
-	// 记录解析结果
 	for _, email := range emails {
 		if id, ok := resolved[email]; ok {
 			log.Printf("[alert] Resolved email %s -> %s", email, id)

@@ -7,19 +7,19 @@ import (
 	"strings"
 )
 
-// Config 集群配置文件结构
+// Config is the cluster configuration file structure.
 type Config struct {
 	Clusters []ClusterConfig `json:"clusters"`
 }
 
-// ClusterConfig 单个集群的配置
+// ClusterConfig holds the configuration for a single cluster.
 type ClusterConfig struct {
-	Name       string `json:"name"`       // 显示名称（用户友好）
-	Context    string `json:"context"`    // kubeconfig 中的 context 名称
-	Kubeconfig string `json:"kubeconfig"` // kubeconfig 文件路径
+	Name       string `json:"name"`       // Display name (user-friendly)
+	Context    string `json:"context"`    // Context name in kubeconfig
+	Kubeconfig string `json:"kubeconfig"` // Path to kubeconfig file
 }
 
-// LoadConfig 从文件加载集群配置
+// LoadConfig loads cluster configuration from a file.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -34,25 +34,25 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// FindClusterByName 根据名称查找集群配置
+// FindClusterByName looks up a cluster config by name, context, or fuzzy match.
 func (c *Config) FindClusterByName(input string) (*ClusterConfig, error) {
 	input = strings.ToLower(strings.TrimSpace(input))
 
-	// 1. 精确匹配 name
+	// 1. Exact match on name
 	for _, cluster := range c.Clusters {
 		if strings.ToLower(cluster.Name) == input {
 			return &cluster, nil
 		}
 	}
 
-	// 2. 精确匹配 context
+	// 2. Exact match on context
 	for _, cluster := range c.Clusters {
 		if strings.ToLower(cluster.Context) == input {
 			return &cluster, nil
 		}
 	}
 
-	// 3. 模糊匹配 name（包含关系）
+	// 3. Fuzzy match on name (substring)
 	for _, cluster := range c.Clusters {
 		if strings.Contains(strings.ToLower(cluster.Name), input) {
 			return &cluster, nil
@@ -62,12 +62,12 @@ func (c *Config) FindClusterByName(input string) (*ClusterConfig, error) {
 	return nil, fmt.Errorf("cluster not found: %s", input)
 }
 
-// GetAllClusters 获取所有集群配置
+// GetAllClusters returns all cluster configurations.
 func (c *Config) GetAllClusters() []ClusterConfig {
 	return c.Clusters
 }
 
-// DefaultConfig 生成默认配置（从 kubeconfig contexts 自动生成）
+// DefaultConfig generates a default configuration from a list of kubeconfig context names.
 func DefaultConfig(contexts []string) *Config {
 	cfg := &Config{
 		Clusters: make([]ClusterConfig, 0, len(contexts)),
@@ -83,7 +83,7 @@ func DefaultConfig(contexts []string) *Config {
 	return cfg
 }
 
-// SaveConfig 保存配置到文件
+// SaveConfig saves the configuration to a file.
 func (c *Config) SaveConfig(path string) error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {

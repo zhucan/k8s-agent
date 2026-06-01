@@ -16,19 +16,18 @@ import (
 	"github.com/k8s-inspect/internal/nodes"
 )
 
-// NodeShellExecutor 通过创建特权 Pod 在节点上执行命令
+// NodeShellExecutor executes commands on a node by creating a privileged Pod.
 type NodeShellExecutor struct {
 	CS         *kubernetes.Clientset
 	RestConfig *rest.Config
 	Nodes      *nodes.Registry
 }
 
-// execOnNodeViaPod 在指定节点上通过特权 Pod 执行命令
+// execOnNodeViaPod runs a shell command on the specified node via a short-lived privileged Pod.
 func (e *NodeShellExecutor) execOnNodeViaPod(ctx context.Context, nodeName, command string) (string, error) {
 	namespace := "default"
 	podName := fmt.Sprintf("node-shell-%d", time.Now().Unix())
 
-	// 创建特权 Pod
 	hostPathType := corev1.HostPathDirectory
 	privileged := true
 	pod := &corev1.Pod{
@@ -75,25 +74,22 @@ func (e *NodeShellExecutor) execOnNodeViaPod(ctx context.Context, nodeName, comm
 		},
 	}
 
-	// 创建 Pod
 	_, err := e.CS.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("create pod: %w", err)
 	}
 
-	// 确保清理 Pod
 	defer func() {
 		deleteCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = e.CS.CoreV1().Pods(namespace).Delete(deleteCtx, podName, metav1.DeleteOptions{})
 	}()
 
-	// 等待 Pod Running
 	if err := e.waitForPodRunning(ctx, namespace, podName); err != nil {
 		return "", fmt.Errorf("wait pod running: %w", err)
 	}
 
-	// 在 Pod 中执行命令（使用 chroot 到 /host）
+	// Execute the command inside the pod using chroot to access the host filesystem
 	execCommand := []string{"chroot", "/host", "/bin/sh", "-c", command}
 	output, err := e.execInPod(ctx, namespace, podName, "shell", execCommand)
 	if err != nil {
@@ -103,9 +99,9 @@ func (e *NodeShellExecutor) execOnNodeViaPod(ctx context.Context, nodeName, comm
 	return output, nil
 }
 
-// waitForPodRunning 等待 Pod 进入 Running 状态
+// waitForPodRunning polls until the pod enters Running state or the deadline is exceeded.
 func (e *NodeShellExecutor) waitForPodRunning(ctx context.Context, namespace, podName string) error {
-	timeout := 120 * time.Second // 增加到 120 秒
+	timeout := 120 * time.Second
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
@@ -114,9 +110,7 @@ func (e *NodeShellExecutor) waitForPodRunning(ctx context.Context, namespace, po
 			return err
 		}
 
-		// 检查 Pod 状态
 		if pod.Status.Phase == corev1.PodRunning {
-			// 确保容器也 Ready
 			for _, cs := range pod.Status.ContainerStatuses {
 				if cs.Name == "shell" && cs.Ready {
 					return nil
@@ -128,10 +122,8 @@ func (e *NodeShellExecutor) waitForPodRunning(ctx context.Context, namespace, po
 			return fmt.Errorf("pod failed: %s", pod.Status.Message)
 		}
 
-		// 检查容器状态，提供更详细的错误信息
 		for _, cs := range pod.Status.ContainerStatuses {
 			if cs.State.Waiting != nil {
-				// 如果是镜像拉取错误，提供更友好的提示
 				if cs.State.Waiting.Reason == "ImagePullBackOff" || cs.State.Waiting.Reason == "ErrImagePull" {
 					return fmt.Errorf("image pull failed: %s (image: %s)", cs.State.Waiting.Message, pod.Spec.Containers[0].Image)
 				}
@@ -141,12 +133,10 @@ func (e *NodeShellExecutor) waitForPodRunning(ctx context.Context, namespace, po
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(2 * time.Second): // 增加检查间隔
-			// 继续等待
+		case <-time.After(2 * time.Second):
 		}
 	}
 
-	// 超时后，尝试获取 Pod 状态提供更多信息
 	pod, err := e.CS.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err == nil {
 		return fmt.Errorf("timeout waiting for pod to be running (current phase: %s, message: %s)", pod.Status.Phase, pod.Status.Message)
@@ -155,7 +145,7 @@ func (e *NodeShellExecutor) waitForPodRunning(ctx context.Context, namespace, po
 	return fmt.Errorf("timeout waiting for pod to be running")
 }
 
-// execInPod 在 Pod 中执行命令
+// execInPod executes a command inside a running pod container and returns stdout+stderr.
 func (e *NodeShellExecutor) execInPod(ctx context.Context, namespace, podName, containerName string, command []string) (string, error) {
 	req := e.CS.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -196,7 +186,7 @@ func (e *NodeShellExecutor) execInPod(ctx context.Context, namespace, podName, c
 	return output, nil
 }
 
-// writeBuffer 实现 io.Writer 接口
+// writeBuffer implements io.Writer by accumulating bytes in a slice.
 type writeBuffer struct {
 	data []byte
 }

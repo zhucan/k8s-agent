@@ -24,8 +24,7 @@ func ResolveKubeconfig(explicit string) string {
 	return ""
 }
 
-// loadingRules 让 BuildConfigFromKubeconfigGetter / overrides 走标准的 kubeconfig 解析,支持
-// KUBECONFIG 中的多文件(冒号/分号分隔)
+// loadingRules returns ClientConfigLoadingRules that support colon/semicolon-separated KUBECONFIG paths.
 func loadingRules(kubeconfig string) *clientcmd.ClientConfigLoadingRules {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
@@ -34,12 +33,12 @@ func loadingRules(kubeconfig string) *clientcmd.ClientConfigLoadingRules {
 	return rules
 }
 
-// NewClient 用 kubeconfig 默认 context 构造 client(in-cluster fallback)
+// NewClient builds a client using the default context in the kubeconfig (falls back to in-cluster config).
 func NewClient(kubeconfig string) (*kubernetes.Clientset, error) {
 	return NewClientForContext(kubeconfig, "")
 }
 
-// NewClientForContext 用指定 context 构造 client。kubeconfig 为空 + context 为空时退化到 in-cluster。
+// NewClientForContext builds a client for the specified context. Falls back to in-cluster config when both are empty.
 func NewClientForContext(kubeconfig, context string) (*kubernetes.Clientset, error) {
 	cfg, err := BuildConfigForContext(kubeconfig, context)
 	if err != nil {
@@ -52,7 +51,7 @@ func NewClientForContext(kubeconfig, context string) (*kubernetes.Clientset, err
 	return cs, nil
 }
 
-// BuildConfigForContext 构造 rest.Config（用于需要 RestConfig 的场景，如 remotecommand）
+// BuildConfigForContext builds a rest.Config for the specified context (needed for remotecommand etc.).
 func BuildConfigForContext(kubeconfig, context string) (*rest.Config, error) {
 	var (
 		cfg *rest.Config
@@ -77,14 +76,14 @@ func BuildConfigForContext(kubeconfig, context string) (*rest.Config, error) {
 	return cfg, nil
 }
 
-// ContextInfo: kubeconfig 中一个 context 的概览
+// ContextInfo is a summary of a single context entry in a kubeconfig file.
 type ContextInfo struct {
 	Name    string
 	Cluster string
 	Current bool
 }
 
-// ListContexts 列出 kubeconfig 中的所有 context;current 标志标识默认 context。
+// ListContexts lists all contexts in the kubeconfig; the Current flag marks the default context.
 func ListContexts(kubeconfig string) ([]ContextInfo, error) {
 	raw, err := loadingRules(kubeconfig).Load()
 	if err != nil {

@@ -1,13 +1,13 @@
-// Package lark 提供飞书自建应用 webhook 接入和 OpenAPI 调用。
+// Package lark provides Feishu (Lark) self-built app webhook integration and OpenAPI calls.
 //
-// 仅实现 MVP 必需的子集:
-//   - URL 验证(应用首次配置回调地址时飞书会发挑战)
-//   - 加密事件解密(AES-256-CBC)
-//   - im.message.receive_v1 事件解析
-//   - tenant_access_token 获取(自带缓存)
-//   - 回复消息 (reply_in_thread)
+// Only the subset required for the MVP is implemented:
+//   - URL verification (Feishu sends a challenge when the callback URL is first configured)
+//   - Encrypted event decryption (AES-256-CBC)
+//   - im.message.receive_v1 event parsing
+//   - tenant_access_token retrieval (with built-in caching)
+//   - Reply message (reply_in_thread)
 //
-// 飞书开放平台文档: https://open.feishu.cn/document/
+// Feishu Open Platform docs: https://open.feishu.cn/document/
 package lark
 
 import (
@@ -26,18 +26,18 @@ import (
 	"time"
 )
 
-// Config: 自建应用凭证 + 加密参数。来自飞书后台「凭证与基础信息」+「事件订阅」。
+// Config holds self-built app credentials and encryption parameters from the Feishu developer console.
 type Config struct {
 	AppID         string
 	AppSecret     string
-	EncryptKey    string // 事件订阅启用加密时填的 Encrypt Key
-	VerifyToken   string // 应用「事件订阅」页签 Verification Token
+	EncryptKey    string // Encrypt Key configured when event encryption is enabled
+	VerifyToken   string // Verification Token on the app's "Event Subscriptions" tab
 }
 
-// =============== 事件加密 / 解密 ===============
+// =============== Event encryption / decryption ===============
 
-// decryptEvent 飞书事件加密体: { "encrypt": "<base64>" }
-// 算法: AES-256-CBC, key = sha256(EncryptKey), iv = cipher[:16], payload = cipher[16:]
+// decryptEvent decrypts a Feishu encrypted event body: { "encrypt": "<base64>" }
+// Algorithm: AES-256-CBC, key = sha256(EncryptKey), iv = cipher[:16], payload = cipher[16:]
 func decryptEvent(encryptKey, encrypted string) ([]byte, error) {
 	buf, err := base64.StdEncoding.DecodeString(encrypted)
 	if err != nil {
@@ -58,7 +58,7 @@ func decryptEvent(encryptKey, encrypted string) ([]byte, error) {
 	}
 	pt := make([]byte, len(ct))
 	cipher.NewCBCDecrypter(block, iv).CryptBlocks(pt, ct)
-	// PKCS7 去填充
+	// PKCS7 unpad
 	if len(pt) == 0 {
 		return nil, errors.New("plaintext empty")
 	}
@@ -69,21 +69,21 @@ func decryptEvent(encryptKey, encrypted string) ([]byte, error) {
 	return pt[:len(pt)-padLen], nil
 }
 
-// =============== 事件 schema ===============
+// =============== Event schema ===============
 
-// EncryptedPayload: 当应用启用了加密时,飞书发来的 body 长这样
+// EncryptedPayload is the body Feishu sends when event encryption is enabled.
 type EncryptedPayload struct {
 	Encrypt string `json:"encrypt"`
 }
 
-// URLVerification: 用 plain 模式时也可能直接收到挑战
+// URLVerification is the challenge body sent in plain mode.
 type URLVerification struct {
 	Type      string `json:"type"`
 	Challenge string `json:"challenge"`
 	Token     string `json:"token"`
 }
 
-// EventV2: 飞书事件 v2 schema
+// EventV2 is the Feishu event v2 schema.
 type EventV2 struct {
 	Schema string `json:"schema"`
 	Header struct {
@@ -97,7 +97,7 @@ type EventV2 struct {
 	Event json.RawMessage `json:"event"`
 }
 
-// MessageReceiveEvent: im.message.receive_v1 事件 body
+// MessageReceiveEvent is the body of an im.message.receive_v1 event.
 type MessageReceiveEvent struct {
 	Sender struct {
 		SenderID struct {
@@ -111,7 +111,7 @@ type MessageReceiveEvent struct {
 		ChatID      string `json:"chat_id"`
 		ChatType    string `json:"chat_type"` // p2p | group
 		MessageType string `json:"message_type"`
-		Content     string `json:"content"` // JSON string,如 {"text":"@_user_1 hello"}
+		Content     string `json:"content"` // JSON string, e.g. {"text":"@_user_1 hello"}
 		Mentions    []struct {
 			Key    string `json:"key"`
 			ID     struct {
@@ -124,25 +124,25 @@ type MessageReceiveEvent struct {
 
 // =============== Webhook handler ===============
 
-// EventHandler 解析后的回调,在 message 事件到来时执行业务逻辑
+// EventHandler is the callback invoked when a message event arrives.
 type EventHandler func(ctx Context)
 
-// Context 给 handler 用的简化上下文
+// Context is a simplified context passed to the event handler.
 type Context struct {
 	Req          *http.Request
 	MessageID    string
 	ChatID       string
 	ChatType     string
 	SenderOpenID string
-	Text         string // 已经去掉 @bot mention 的纯文本
-	MessageType  string // 消息类型: text, file, image 等
-	FileKey      string // 文件消息的 file_key
+	Text         string // plain text with @bot mention stripped
+	MessageType  string // message type: text, file, image, etc.
+	FileKey      string // file_key for file messages
 }
 
-// Webhook: 实现 http.Handler 接收飞书事件回调
+// Webhook implements http.Handler and receives Feishu event callbacks.
 type Webhook struct {
-	cfg     Config
-	OnMsg   EventHandler
+	cfg   Config
+	OnMsg EventHandler
 }
 
 func NewWebhook(cfg Config, onMsg EventHandler) *Webhook {
@@ -157,12 +157,12 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// 调试日志：打印请求体
+	// Debug log: print request body
 	fmt.Printf("[webhook] Request body: %s\n", string(body))
 
 	plain := body
 
-	// 加密模式:先解密
+	// Encrypted mode: decrypt first
 	var enc EncryptedPayload
 	if err := json.Unmarshal(body, &enc); err == nil && enc.Encrypt != "" {
 		if w.cfg.EncryptKey == "" {
@@ -176,7 +176,7 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// URL 验证
+	// URL verification
 	var urlVerify URLVerification
 	if err := json.Unmarshal(plain, &urlVerify); err == nil && urlVerify.Type == "url_verification" {
 		if w.cfg.VerifyToken != "" && urlVerify.Token != w.cfg.VerifyToken {
@@ -188,7 +188,7 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 事件 v2
+	// Event v2
 	var ev EventV2
 	if err := json.Unmarshal(plain, &ev); err != nil {
 		http.Error(rw, "parse event: "+err.Error(), http.StatusBadRequest)
@@ -221,15 +221,15 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			})
 		}
 	default:
-		// 其它事件忽略
+		// Ignore other event types
 	}
 
 	rw.WriteHeader(http.StatusOK)
 	_, _ = rw.Write([]byte(`{"code":0}`))
 }
 
-// extractText 从 message.content(JSON 字符串)里抽出 text,并把 @bot 的 mention 替换掉
-// content 形如 {"text":"@_user_1 看下192.168.1.10的磁盘"}
+// extractText extracts the text field from message.content (a JSON string) and strips @bot mentions.
+// content looks like {"text":"@_user_1 check disk on 192.168.1.10"}
 func extractText(contentJSON string, mentions []struct {
 	Key string `json:"key"`
 	ID  struct {
@@ -245,14 +245,14 @@ func extractText(contentJSON string, mentions []struct {
 	}
 	t := c.Text
 	for _, m := range mentions {
-		// 飞书 @ 的占位符是 @_user_<index>,我们把它去掉
+		// Feishu @mention placeholder is @_user_<index> — strip it
 		t = strings.ReplaceAll(t, "@"+m.Key, "")
 	}
 	return strings.TrimSpace(t)
 }
 
-// extractFileKey 从文件消息中提取 file_key
-// 文件消息的 content 形如 {"file_key":"xxx"}
+// extractFileKey extracts the file_key from a file message.
+// File message content looks like {"file_key":"xxx"}
 func extractFileKey(messageType, contentJSON string) string {
 	if messageType != "file" {
 		return ""
@@ -268,7 +268,7 @@ func extractFileKey(messageType, contentJSON string) string {
 
 // =============== OpenAPI client ===============
 
-// Client: 调飞书 OpenAPI(获取 token, 回消息)
+// Client calls the Feishu OpenAPI (token retrieval, message reply).
 type Client struct {
 	cfg  Config
 	http *http.Client
@@ -282,7 +282,7 @@ func NewClient(cfg Config) *Client {
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}
 }
 
-// tenantToken 拿 tenant_access_token,缓存到过期前 60s
+// tenantToken returns the tenant_access_token, caching it until 60s before expiry.
 func (c *Client) tenantToken() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -319,8 +319,8 @@ func (c *Client) tenantToken() (string, error) {
 	return c.token, nil
 }
 
-// ReplyText 在指定 message 下回复纯文本。
-// 飞书 reply 接口: POST /open-apis/im/v1/messages/{message_id}/reply
+// ReplyText replies with plain text under the specified message.
+// Feishu reply API: POST /open-apis/im/v1/messages/{message_id}/reply
 func (c *Client) ReplyText(messageID, text string) error {
 	token, err := c.tenantToken()
 	if err != nil {
@@ -353,8 +353,8 @@ func (c *Client) ReplyText(messageID, text string) error {
 	return nil
 }
 
-// DownloadFile 下载文件内容
-// 飞书文件下载接口: GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}
+// DownloadFile downloads file content.
+// Feishu file download API: GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}
 func (c *Client) DownloadFile(messageID, fileKey string) ([]byte, error) {
 	token, err := c.tenantToken()
 	if err != nil {

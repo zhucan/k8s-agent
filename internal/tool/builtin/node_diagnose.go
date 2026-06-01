@@ -11,7 +11,7 @@ import (
 	"github.com/k8s-inspect/internal/nodes"
 )
 
-// DiagnoseNode 诊断节点问题 - 收集 containerd、kubelet、系统日志等信息
+// DiagnoseNode diagnoses node issues by collecting containerd, kubelet, and system log information.
 type DiagnoseNode struct {
 	CS         *kubernetes.Clientset
 	RestConfig *rest.Config
@@ -57,7 +57,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("=== Node Diagnostics: %s ===\n\n", node.Name))
 
-	// 1. 检查 containerd 状态
+	// 1. Check containerd status
 	result.WriteString("## Containerd Status\n")
 	containerdStatus, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"systemctl status containerd --no-pager -l || echo 'containerd service check failed'")
@@ -68,7 +68,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	}
 	result.WriteString("\n\n")
 
-	// 2. 检查 kubelet 状态
+	// 2. Check kubelet status
 	result.WriteString("## Kubelet Status\n")
 	kubeletStatus, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"systemctl status kubelet --no-pager -l || echo 'kubelet service check failed'")
@@ -79,7 +79,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	}
 	result.WriteString("\n\n")
 
-	// 3. 获取最近的 containerd 日志
+	// 3. Collect recent containerd logs
 	result.WriteString("## Recent Containerd Logs (last 50 lines)\n")
 	containerdLogs, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"journalctl -u containerd -n 50 --no-pager || echo 'containerd logs unavailable'")
@@ -90,7 +90,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	}
 	result.WriteString("\n\n")
 
-	// 4. 获取最近的 kubelet 日志
+	// 4. Collect recent kubelet logs
 	result.WriteString("## Recent Kubelet Logs (last 50 lines)\n")
 	kubeletLogs, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"journalctl -u kubelet -n 50 --no-pager || echo 'kubelet logs unavailable'")
@@ -101,7 +101,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	}
 	result.WriteString("\n\n")
 
-	// 5. 检查系统关键错误日志
+	// 5. Check system critical error logs
 	result.WriteString("## System Error Logs (last 30 lines with ERROR/FATAL/panic)\n")
 	systemErrors, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"journalctl -p err -n 30 --no-pager || echo 'system error logs unavailable'")
@@ -112,7 +112,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	}
 	result.WriteString("\n\n")
 
-	// 6. 检查磁盘空间
+	// 6. Check disk space
 	result.WriteString("## Disk Space\n")
 	diskSpace, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"df -h / /var/lib/containerd /var/lib/kubelet 2>/dev/null || df -h /")
@@ -123,7 +123,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	}
 	result.WriteString("\n\n")
 
-	// 7. 检查内存使用
+	// 7. Check memory usage
 	result.WriteString("## Memory Usage\n")
 	memUsage, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"free -h")
@@ -134,7 +134,7 @@ func (t *DiagnoseNode) Execute(ctx context.Context, input map[string]any) (strin
 	}
 	result.WriteString("\n\n")
 
-	// 8. 检查 inode 使用情况
+	// 8. Check inode usage
 	result.WriteString("## Inode Usage\n")
 	inodeUsage, err := executor.execOnNodeViaPod(ctx, node.Name,
 		"df -i / /var/lib/containerd /var/lib/kubelet 2>/dev/null || df -i /")

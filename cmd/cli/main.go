@@ -33,79 +33,79 @@ func main() {
 		toolInput      string
 	)
 
-	// 自定义 Usage
+	// Custom Usage
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "k8s-inspect - Kubernetes 集群运维助手\n\n")
-		fmt.Fprintf(os.Stderr, "用法:\n")
-		fmt.Fprintf(os.Stderr, "  %s [选项]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "k8s-inspect - Kubernetes Cluster Operations Assistant\n\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  %s [options]\n\n", os.Args[0])
 
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "📋 模式 1: LLM 自然语言交互模式（默认）\n")
+		fmt.Fprintf(os.Stderr, "📋 Mode 1: LLM Natural Language Mode (default)\n")
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "使用 AI 理解自然语言查询，自动调用相应工具\n\n")
-		fmt.Fprintf(os.Stderr, "示例:\n")
-		fmt.Fprintf(os.Stderr, "  # 单集群交互模式\n")
+		fmt.Fprintf(os.Stderr, "Uses AI to understand natural language queries and invoke tools automatically.\n\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  # Single-cluster interactive mode\n")
 		fmt.Fprintf(os.Stderr, "  %s --kubeconfig ~/.kube/config\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # 多集群交互模式\n")
+		fmt.Fprintf(os.Stderr, "  # Multi-cluster interactive mode\n")
 		fmt.Fprintf(os.Stderr, "  %s --multi-cluster --cluster-config clusters.json\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # 单次查询模式\n")
-		fmt.Fprintf(os.Stderr, "  %s --once \"列出所有节点\"\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Single query mode\n")
+		fmt.Fprintf(os.Stderr, "  %s --once \"list all nodes\"\n\n", os.Args[0])
 
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "🔧 模式 2: 直接工具调用模式（--no-llm）\n")
+		fmt.Fprintf(os.Stderr, "🔧 Mode 2: Direct Tool Invocation Mode (--no-llm)\n")
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "不使用 LLM，直接调用工具，返回结构化 JSON 数据\n")
-		fmt.Fprintf(os.Stderr, "适合脚本集成、API 调用、自动化场景\n\n")
-		fmt.Fprintf(os.Stderr, "示例:\n")
-		fmt.Fprintf(os.Stderr, "  # 列出所有集群\n")
+		fmt.Fprintf(os.Stderr, "Invokes tools directly without LLM, returns structured JSON data.\n")
+		fmt.Fprintf(os.Stderr, "Suitable for scripting, API calls, and automation.\n\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  # List all clusters\n")
 		fmt.Fprintf(os.Stderr, "  %s --no-llm --multi-cluster --tool list_clusters\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # 列出不健康的节点\n")
+		fmt.Fprintf(os.Stderr, "  # List unhealthy nodes\n")
 		fmt.Fprintf(os.Stderr, "  %s --no-llm --kubeconfig config.yaml --tool list_nodes --input '{\"filter\":\"unhealthy\"}'\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # 切换集群\n")
+		fmt.Fprintf(os.Stderr, "  # Switch cluster\n")
 		fmt.Fprintf(os.Stderr, "  %s --no-llm --multi-cluster --tool switch_cluster --input '{\"cluster\":\"prod\"}'\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # 交互模式（直接输入工具名和参数）\n")
+		fmt.Fprintf(os.Stderr, "  # Interactive mode (type tool name and args)\n")
 		fmt.Fprintf(os.Stderr, "  %s --no-llm --multi-cluster\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  tool> list_nodes {\"filter\":\"unhealthy\"}\n\n")
 
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "⚙️  通用选项\n")
+		fmt.Fprintf(os.Stderr, "⚙️  General Options\n")
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
 		flag.PrintDefaults()
 
 		fmt.Fprintf(os.Stderr, "\n═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "🛠️  集群管理\n")
+		fmt.Fprintf(os.Stderr, "🛠️  Cluster Management\n")
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "  # 列出所有可用的 context\n")
+		fmt.Fprintf(os.Stderr, "  # List all available contexts\n")
 		fmt.Fprintf(os.Stderr, "  %s --list-contexts\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # 添加集群到配置文件\n")
-		fmt.Fprintf(os.Stderr, "  %s --add-cluster <名称> --kubeconfig <路径>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Add cluster to config file\n")
+		fmt.Fprintf(os.Stderr, "  %s --add-cluster <name> --kubeconfig <path>\n\n", os.Args[0])
 
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "📚 可用工具（--no-llm 模式）\n")
+		fmt.Fprintf(os.Stderr, "📚 Available Tools (--no-llm mode)\n")
 		fmt.Fprintf(os.Stderr, "═══════════════════════════════════════════════════════════════\n")
-		fmt.Fprintf(os.Stderr, "集群管理:\n")
-		fmt.Fprintf(os.Stderr, "  - list_clusters          列出所有集群\n")
-		fmt.Fprintf(os.Stderr, "  - switch_cluster         切换当前集群\n")
-		fmt.Fprintf(os.Stderr, "  - add_cluster_to_config  添加新集群\n\n")
-		fmt.Fprintf(os.Stderr, "节点管理:\n")
-		fmt.Fprintf(os.Stderr, "  - list_nodes             列出节点（支持过滤：all/healthy/unhealthy）\n")
-		fmt.Fprintf(os.Stderr, "  - node_status            查看节点详细状态\n")
-		fmt.Fprintf(os.Stderr, "  - cordon_node            标记节点为不可调度\n")
-		fmt.Fprintf(os.Stderr, "  - uncordon_node          标记节点为可调度\n")
-		fmt.Fprintf(os.Stderr, "  - diagnose_node          诊断节点问题\n")
-		fmt.Fprintf(os.Stderr, "  - find_node_in_clusters  在所有集群中查找节点\n\n")
-		fmt.Fprintf(os.Stderr, "资源查询:\n")
-		fmt.Fprintf(os.Stderr, "  - list_pods              列出 Pod\n")
-		fmt.Fprintf(os.Stderr, "  - list_namespaces        列出命名空间\n\n")
-		fmt.Fprintf(os.Stderr, "硬件信息:\n")
-		fmt.Fprintf(os.Stderr, "  - k8s_hardware_info      查看节点硬件信息\n")
-		fmt.Fprintf(os.Stderr, "  - k8s_cpu_info           查看 CPU 信息\n")
-		fmt.Fprintf(os.Stderr, "  - k8s_memory_info        查看内存信息\n")
-		fmt.Fprintf(os.Stderr, "  - k8s_network_info       查看网络信息\n\n")
+		fmt.Fprintf(os.Stderr, "Cluster Management:\n")
+		fmt.Fprintf(os.Stderr, "  - list_clusters          List all clusters\n")
+		fmt.Fprintf(os.Stderr, "  - switch_cluster         Switch current cluster\n")
+		fmt.Fprintf(os.Stderr, "  - add_cluster_to_config  Add a new cluster\n\n")
+		fmt.Fprintf(os.Stderr, "Node Management:\n")
+		fmt.Fprintf(os.Stderr, "  - list_nodes             List nodes (filter: all/healthy/unhealthy)\n")
+		fmt.Fprintf(os.Stderr, "  - node_status            View detailed node status\n")
+		fmt.Fprintf(os.Stderr, "  - cordon_node            Mark node as unschedulable\n")
+		fmt.Fprintf(os.Stderr, "  - uncordon_node          Mark node as schedulable\n")
+		fmt.Fprintf(os.Stderr, "  - diagnose_node          Diagnose node issues\n")
+		fmt.Fprintf(os.Stderr, "  - find_node_in_clusters  Find node across all clusters\n\n")
+		fmt.Fprintf(os.Stderr, "Resource Queries:\n")
+		fmt.Fprintf(os.Stderr, "  - list_pods              List Pods\n")
+		fmt.Fprintf(os.Stderr, "  - list_namespaces        List namespaces\n\n")
+		fmt.Fprintf(os.Stderr, "Hardware Info:\n")
+		fmt.Fprintf(os.Stderr, "  - k8s_hardware_info      View node hardware info\n")
+		fmt.Fprintf(os.Stderr, "  - k8s_cpu_info           View CPU info\n")
+		fmt.Fprintf(os.Stderr, "  - k8s_memory_info        View memory info\n")
+		fmt.Fprintf(os.Stderr, "  - k8s_network_info       View network info\n\n")
 
-		fmt.Fprintf(os.Stderr, "环境变量:\n")
-		fmt.Fprintf(os.Stderr, "  ANTHROPIC_API_KEY        Anthropic API 密钥（LLM 模式必需）\n")
-		fmt.Fprintf(os.Stderr, "  KUBECONFIG               默认 kubeconfig 路径\n\n")
+		fmt.Fprintf(os.Stderr, "Environment Variables:\n")
+		fmt.Fprintf(os.Stderr, "  ANTHROPIC_API_KEY        Anthropic API key (required for LLM mode)\n")
+		fmt.Fprintf(os.Stderr, "  KUBECONFIG               Default kubeconfig path\n\n")
 	}
 
 	flag.StringVar(&kubeconfigFlag, "kubeconfig", "", "Path to kubeconfig (default $KUBECONFIG or ~/.kube/config)")
@@ -120,13 +120,13 @@ func main() {
 	flag.StringVar(&toolInput, "input", "{}", "Tool input as JSON string (default: {})")
 	flag.Parse()
 
-	// 如果是 add-cluster 模式
+	// add-cluster mode
 	if addCluster != "" {
 		addClusterToConfig(kubeconfigFlag, addCluster, clusterConfig)
 		return
 	}
 
-	// 如果是 list-contexts 模式,列出所有 context 后退出
+	// list-contexts mode: list all contexts and exit
 	if listContexts {
 		showContexts(kubeconfigFlag)
 		return
@@ -142,35 +142,35 @@ func main() {
 	})
 	defer c.Stop()
 
-	// 非 LLM 模式：直接调用工具
+	// Non-LLM mode: direct tool invocation
 	if noLLM {
 		if toolName != "" {
-			// 直接调用指定的工具
+			// Invoke the specified tool directly
 			runToolDirect(ctx, c, toolName, toolInput)
 			return
 		}
 
-		// 非 LLM 交互模式
+		// Non-LLM interactive mode
 		fmt.Fprintln(os.Stderr, "\n──────────────────────────────────────────")
 		fmt.Fprintln(os.Stderr, "k8s-cli ready (Direct Tool Mode)")
 		fmt.Fprintf(os.Stderr, "%d nodes · %d tools\n", len(c.Nodes.List()), len(c.Tools.List()))
-		fmt.Fprintln(os.Stderr, "可用 tools:")
+		fmt.Fprintln(os.Stderr, "Available tools:")
 		for _, t := range c.Tools.List() {
 			fmt.Fprintf(os.Stderr, "  - %s: %s\n", t.Name(), t.Description())
 		}
 		fmt.Fprintln(os.Stderr, "──────────────────────────────────────────\n")
-		fmt.Fprintln(os.Stderr, "输入格式: <tool_name> [json_input]")
-		fmt.Fprintln(os.Stderr, "示例: list_nodes {\"filter\":\"unhealthy\"}")
-		fmt.Fprintln(os.Stderr, "输入 'exit' 退出\n")
+		fmt.Fprintln(os.Stderr, "Format: <tool_name> [json_input]")
+		fmt.Fprintln(os.Stderr, "Example: list_nodes {\"filter\":\"unhealthy\"}")
+		fmt.Fprintln(os.Stderr, "Type 'exit' to quit\n")
 
 		runDirectMode(ctx, c)
 		return
 	}
 
-	// LLM 模式（原有逻辑）
+	// LLM mode
 	fmt.Fprintf(os.Stderr, "\n──────────────────────────────────────────\n")
 	fmt.Fprintf(os.Stderr, "k8s-cli ready · %d nodes · %d tools\n", len(c.Nodes.List()), len(c.Tools.List()))
-	fmt.Fprintf(os.Stderr, "可用 tools: ")
+	fmt.Fprintf(os.Stderr, "Available tools: ")
 	names := make([]string, 0, len(c.Tools.List()))
 	for _, t := range c.Tools.List() {
 		names = append(names, t.Name())
@@ -184,7 +184,7 @@ func main() {
 	}
 
 	// REPL
-	fmt.Fprintln(os.Stderr, "进入交互模式,输入问题后回车;exit 退出。")
+	fmt.Fprintln(os.Stderr, "Interactive mode — type a question and press Enter; 'exit' to quit.")
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          "> ",
@@ -199,7 +199,7 @@ func main() {
 	defer rl.Close()
 
 	for {
-		fmt.Fprintln(os.Stderr) // 在每次提示前输出空行
+		fmt.Fprintln(os.Stderr) // blank line before each prompt
 		line, err := rl.Readline()
 		if err == readline.ErrInterrupt {
 			if len(line) == 0 {
@@ -261,7 +261,7 @@ func showContexts(kubeconfig string) {
 }
 
 func addClusterToConfig(kubeconfigPath, name, configFile string) {
-	// 验证参数
+	// Validate parameters
 	if kubeconfigPath == "" {
 		log.Fatal("❌ --kubeconfig is required")
 	}
@@ -269,24 +269,24 @@ func addClusterToConfig(kubeconfigPath, name, configFile string) {
 		log.Fatal("❌ --add-cluster requires a cluster name")
 	}
 
-	// 检查 kubeconfig 文件是否存在
+	// Check kubeconfig file exists
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
 		log.Fatalf("❌ kubeconfig file not found: %s", kubeconfigPath)
 	}
 
-	// 读取 kubeconfig 文件内容
+	// Read kubeconfig file content
 	kubeconfigContent, err := os.ReadFile(kubeconfigPath)
 	if err != nil {
 		log.Fatalf("❌ Failed to read kubeconfig: %v", err)
 	}
 
-	// 使用 AddClusterFromKubeconfig 添加集群（会保存 kubeconfig 并更新配置）
+	// Add cluster using AddClusterFromKubeconfig (saves kubeconfig and updates config)
 	savedPath, contextName, err := cluster.AddClusterFromKubeconfig(configFile, name, kubeconfigContent)
 	if err != nil {
 		log.Fatalf("❌ Failed to add cluster: %v", err)
 	}
 
-	// 加载配置以获取总数
+	// Load config to get total cluster count
 	cfg, err := cluster.LoadConfig(configFile)
 	if err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
@@ -308,23 +308,23 @@ func addClusterToConfig(kubeconfigPath, name, configFile string) {
 	fmt.Printf("   ./bin/cli --add-cluster <name> --kubeconfig <path> --cluster-config %s\n", configFile)
 }
 
-// runToolDirect 直接调用指定的工具并输出结果
+// runToolDirect invokes a specific tool directly and prints the result.
 func runToolDirect(ctx context.Context, c *bot.Components, toolName, inputJSON string) {
-	// 处理 help 命令
+	// Handle the help command
 	if toolName == "help" {
-		// 尝试从 inputJSON 中提取工具名称
+		// Try to extract a tool name from inputJSON
 		specificTool := strings.Trim(inputJSON, `"{} `)
 		if specificTool != "" && specificTool != "{}" {
-			// help <tool_name> - 显示特定工具的详细信息
+			// help <tool_name> — show detailed info for that tool
 			fmt.Println(showToolHelpCLI(c, specificTool))
 		} else {
-			// help - 显示所有工具列表
+			// help — show all tools list
 			fmt.Println(showAllToolsCLI(c))
 		}
 		return
 	}
 
-	// 查找工具
+	// Find the tool
 	var foundTool tool.Tool
 	for _, t := range c.Tools.List() {
 		if t.Name() == toolName {
@@ -334,26 +334,26 @@ func runToolDirect(ctx context.Context, c *bot.Components, toolName, inputJSON s
 	}
 
 	if foundTool == nil {
-		log.Fatalf("❌ Tool not found: %s\n\n输入 'help' 查看所有可用工具", toolName)
+		log.Fatalf("❌ Tool not found: %s\n\nType 'help' to see all available tools", toolName)
 	}
 
-	// 解析输入
+	// Parse input
 	var input map[string]any
 	if err := json.Unmarshal([]byte(inputJSON), &input); err != nil {
 		log.Fatalf("❌ Invalid JSON input: %v", err)
 	}
 
-	// 执行工具
+	// Execute the tool
 	result, err := foundTool.Execute(ctx, input)
 	if err != nil {
 		log.Fatalf("❌ Tool execution failed: %v", err)
 	}
 
-	// 输出结果
+	// Print result
 	fmt.Println(result)
 }
 
-// runDirectMode 运行直接工具调用的交互模式
+// runDirectMode runs the interactive direct tool invocation mode.
 func runDirectMode(ctx context.Context, c *bot.Components) {
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          "tool> ",
@@ -387,7 +387,7 @@ func runDirectMode(ctx context.Context, c *bot.Components) {
 			break
 		}
 
-		// 解析命令: <tool_name> [json_input]
+		// Parse command: <tool_name> [json_input]
 		parts := strings.SplitN(line, " ", 2)
 		toolName := parts[0]
 		inputJSON := "{}"
@@ -395,7 +395,7 @@ func runDirectMode(ctx context.Context, c *bot.Components) {
 			inputJSON = strings.TrimSpace(parts[1])
 		}
 
-		// 处理 help 命令
+		// Handle help command
 		if toolName == "help" {
 			if len(parts) > 1 {
 				// help <tool_name>
@@ -407,7 +407,7 @@ func runDirectMode(ctx context.Context, c *bot.Components) {
 			continue
 		}
 
-		// 查找工具
+		// Find the tool
 		var foundTool tool.Tool
 		for _, t := range c.Tools.List() {
 			if t.Name() == toolName {
@@ -418,18 +418,18 @@ func runDirectMode(ctx context.Context, c *bot.Components) {
 
 		if foundTool == nil {
 			fmt.Fprintf(os.Stderr, "❌ Tool not found: %s\n", toolName)
-			fmt.Fprintln(os.Stderr, "\n输入 'help' 查看所有可用工具")
+			fmt.Fprintln(os.Stderr, "\nType 'help' to see all available tools")
 			continue
 		}
 
-		// 解析输入
+		// Parse input
 		var input map[string]any
 		if err := json.Unmarshal([]byte(inputJSON), &input); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ Invalid JSON input: %v\n", err)
 			continue
 		}
 
-		// 执行工具
+		// Execute the tool
 		start := time.Now()
 		result, err := foundTool.Execute(ctx, input)
 		elapsed := time.Since(start)
@@ -439,22 +439,21 @@ func runDirectMode(ctx context.Context, c *bot.Components) {
 			continue
 		}
 
-		// 输出结果
+		// Print result
 		fmt.Println(result)
 		fmt.Fprintf(os.Stderr, "\n[took %s]\n\n", elapsed.Round(10*time.Millisecond))
 	}
 }
 
-// showAllToolsCLI 显示所有可用工具的列表
+// showAllToolsCLI returns a formatted list of all available tools grouped by category.
 func showAllToolsCLI(c *bot.Components) string {
 	var result strings.Builder
-	result.WriteString("📚 可用工具列表\n\n")
-	result.WriteString("使用方法: <tool_name> [json_input]\n")
-	result.WriteString("查看工具详情: help <tool_name>\n\n")
+	result.WriteString("📚 Available Tools\n\n")
+	result.WriteString("Usage: <tool_name> [json_input]\n")
+	result.WriteString("Tool details: help <tool_name>\n\n")
 
-	// 按类别分组显示
 	result.WriteString("═══════════════════════════════════\n")
-	result.WriteString("🌐 集群管理\n")
+	result.WriteString("🌐 Cluster Management\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range c.Tools.List() {
 		name := t.Name()
@@ -464,7 +463,7 @@ func showAllToolsCLI(c *bot.Components) string {
 	}
 
 	result.WriteString("═══════════════════════════════════\n")
-	result.WriteString("🖥️  节点管理\n")
+	result.WriteString("🖥️  Node Management\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range c.Tools.List() {
 		name := t.Name()
@@ -474,7 +473,7 @@ func showAllToolsCLI(c *bot.Components) string {
 	}
 
 	result.WriteString("═══════════════════════════════════\n")
-	result.WriteString("📦 资源查询\n")
+	result.WriteString("📦 Resource Queries\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range c.Tools.List() {
 		name := t.Name()
@@ -484,7 +483,7 @@ func showAllToolsCLI(c *bot.Components) string {
 	}
 
 	result.WriteString("═══════════════════════════════════\n")
-	result.WriteString("🔧 硬件信息\n")
+	result.WriteString("🔧 Hardware Info\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range c.Tools.List() {
 		name := t.Name()
@@ -493,15 +492,15 @@ func showAllToolsCLI(c *bot.Components) string {
 		}
 	}
 
-	result.WriteString("💡 提示: 输入 'help <tool_name>' 查看工具的详细参数说明\n")
-	result.WriteString("   示例: help list_nodes\n")
+	result.WriteString("💡 Tip: type 'help <tool_name>' for detailed parameter info\n")
+	result.WriteString("   Example: help list_nodes\n")
 
 	return result.String()
 }
 
-// showToolHelpCLI 显示特定工具的详细帮助信息
+// showToolHelpCLI returns detailed help for a specific tool.
 func showToolHelpCLI(c *bot.Components, toolName string) string {
-	// 查找工具
+	// Find the tool
 	var foundTool tool.Tool
 	for _, t := range c.Tools.List() {
 		if t.Name() == toolName {
@@ -511,27 +510,24 @@ func showToolHelpCLI(c *bot.Components, toolName string) string {
 	}
 
 	if foundTool == nil {
-		return fmt.Sprintf("❌ 工具未找到: %s\n\n输入 'help' 查看所有可用工具", toolName)
+		return fmt.Sprintf("❌ Tool not found: %s\n\nType 'help' to see all available tools", toolName)
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("📖 工具详情: %s\n\n", toolName))
-	result.WriteString(fmt.Sprintf("描述:\n  %s\n\n", foundTool.Description()))
+	result.WriteString(fmt.Sprintf("📖 Tool details: %s\n\n", toolName))
+	result.WriteString(fmt.Sprintf("Description:\n  %s\n\n", foundTool.Description()))
 
-	// 解析并显示参数 schema
 	schema := foundTool.InputSchema()
 	if props, ok := schema["properties"].(map[string]any); ok && len(props) > 0 {
-		result.WriteString("参数:\n")
+		result.WriteString("Parameters:\n")
 		for paramName, paramSchema := range props {
 			if ps, ok := paramSchema.(map[string]any); ok {
 				result.WriteString(fmt.Sprintf("  • %s", paramName))
 
-				// 参数类型
 				if paramType, ok := ps["type"].(string); ok {
 					result.WriteString(fmt.Sprintf(" (%s)", paramType))
 				}
 
-				// 是否必需
 				if required, ok := schema["required"].([]any); ok {
 					isRequired := false
 					for _, r := range required {
@@ -541,24 +537,22 @@ func showToolHelpCLI(c *bot.Components, toolName string) string {
 						}
 					}
 					if isRequired {
-						result.WriteString(" [必需]")
+						result.WriteString(" [required]")
 					} else {
-						result.WriteString(" [可选]")
+						result.WriteString(" [optional]")
 					}
 				} else {
-					result.WriteString(" [可选]")
+					result.WriteString(" [optional]")
 				}
 
 				result.WriteString("\n")
 
-				// 参数描述
 				if desc, ok := ps["description"].(string); ok {
 					result.WriteString(fmt.Sprintf("    %s\n", desc))
 				}
 
-				// 枚举值
 				if enum, ok := ps["enum"].([]any); ok {
-					result.WriteString("    可选值: ")
+					result.WriteString("    Values: ")
 					enumStrs := make([]string, len(enum))
 					for i, e := range enum {
 						enumStrs[i] = fmt.Sprintf("%v", e)
@@ -571,18 +565,17 @@ func showToolHelpCLI(c *bot.Components, toolName string) string {
 			}
 		}
 	} else {
-		result.WriteString("参数: 无需参数或使用默认值\n\n")
+		result.WriteString("Parameters: none required\n\n")
 	}
 
-	// 使用示例
-	result.WriteString("使用示例:\n")
+	result.WriteString("Examples:\n")
 	switch toolName {
 	case "list_nodes":
-		result.WriteString("  # 列出所有节点\n")
+		result.WriteString("  # List all nodes\n")
 		result.WriteString("  list_nodes\n\n")
-		result.WriteString("  # 只列出不健康的节点\n")
+		result.WriteString("  # List unhealthy nodes only\n")
 		result.WriteString("  list_nodes {\"filter\":\"unhealthy\"}\n\n")
-		result.WriteString("  # 只列出健康的节点\n")
+		result.WriteString("  # List healthy nodes only\n")
 		result.WriteString("  list_nodes {\"filter\":\"healthy\"}\n")
 	case "switch_cluster":
 		result.WriteString("  switch_cluster {\"cluster\":\"prod\"}\n")
@@ -590,11 +583,11 @@ func showToolHelpCLI(c *bot.Components, toolName string) string {
 		result.WriteString("  node_status {\"node\":\"master-01\"}\n")
 		result.WriteString("  node_status {\"node\":\"10.1.1.83\"}\n")
 	case "list_pods":
-		result.WriteString("  # 列出所有命名空间的 Pod\n")
+		result.WriteString("  # List pods in all namespaces\n")
 		result.WriteString("  list_pods {\"namespace\":\"all\"}\n\n")
-		result.WriteString("  # 列出特定命名空间的 Pod\n")
+		result.WriteString("  # List pods in a specific namespace\n")
 		result.WriteString("  list_pods {\"namespace\":\"default\"}\n\n")
-		result.WriteString("  # 列出特定节点上的 Pod\n")
+		result.WriteString("  # List pods on a specific node\n")
 		result.WriteString("  list_pods {\"namespace\":\"all\",\"field_selector\":\"spec.nodeName=master-01\"}\n")
 	case "cordon_node":
 		result.WriteString("  cordon_node {\"name\":\"master-01\"}\n")

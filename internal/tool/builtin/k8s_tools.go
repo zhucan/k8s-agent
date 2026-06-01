@@ -14,7 +14,7 @@ import (
 	"github.com/k8s-inspect/internal/nodes"
 )
 
-// ListNodes: 列出白名单(=集群当前 Node)。不需要 SSH。
+// ListNodes lists the whitelist nodes (= current cluster nodes). No SSH required.
 type ListNodes struct {
 	CS    *kubernetes.Clientset
 	Nodes *nodes.Registry
@@ -40,13 +40,13 @@ func (t *ListNodes) InputSchema() map[string]any {
 }
 
 func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, error) {
-	// 获取过滤参数
+	// Get filter parameter
 	filter := "all"
 	if f, ok := input["filter"].(string); ok && f != "" {
 		filter = f
 	}
 
-	// 一次性从 K8s API 获取所有节点
+	// Fetch all nodes from the K8s API in one call
 	nodeList, err := t.CS.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("list nodes: %w", err)
@@ -71,7 +71,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 	for i := range nodeList.Items {
 		node := &nodeList.Items[i]
 
-		// 检查 Ready 状态
+		// Check Ready condition
 		ready := false
 		for _, cond := range node.Status.Conditions {
 			if cond.Type == corev1.NodeReady {
@@ -93,7 +93,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 			healthyCount++
 		}
 
-		// 提前过滤，不匹配的直接跳过
+		// Skip nodes that don't match the filter
 		if filter == "unhealthy" && healthy {
 			continue
 		}
@@ -101,7 +101,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 			continue
 		}
 
-		// 提取 IP 和 hostname
+		// Extract IP and hostname
 		var internalIP, hostname string
 		for _, addr := range node.Status.Addresses {
 			switch addr.Type {
@@ -112,7 +112,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 			}
 		}
 
-		// 提取 roles
+		// Extract roles from labels
 		var roles []string
 		for label := range node.Labels {
 			if strings.HasPrefix(label, "node-role.kubernetes.io/") {
@@ -139,7 +139,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 		return "", err
 	}
 
-	// 添加统计摘要
+	// Add summary stats
 	unhealthyCount := totalCount - healthyCount
 
 	summary := fmt.Sprintf("Total: %d nodes | Healthy: %d | Unhealthy: %d (NotReady: %d, Unschedulable: %d)\n",
@@ -156,7 +156,7 @@ func (t *ListNodes) Execute(ctx context.Context, input map[string]any) (string, 
 	return summary + string(b), nil
 }
 
-// NodeStatus: 从 K8s API 拿单节点 conditions / capacity / allocatable。不需要 SSH。
+// NodeStatus gets a single node's conditions, capacity, and allocatable from the K8s API. No SSH required.
 type NodeStatus struct {
 	CS    *kubernetes.Clientset
 	Nodes *nodes.Registry
@@ -208,7 +208,7 @@ func (t *NodeStatus) Execute(ctx context.Context, input map[string]any) (string,
 	return string(b), nil
 }
 
-// CordonNode: 标记节点为不可调度 (kubectl cordon)
+// CordonNode marks a node as unschedulable (kubectl cordon).
 type CordonNode struct {
 	CS    *kubernetes.Clientset
 	Nodes *nodes.Registry
@@ -247,7 +247,7 @@ func (t *CordonNode) Execute(ctx context.Context, input map[string]any) (string,
 	return fmt.Sprintf("✅ Node %s marked as unschedulable (cordoned)", n.Name), nil
 }
 
-// UncordonNode: 标记节点为可调度 (kubectl uncordon)
+// UncordonNode marks a node as schedulable (kubectl uncordon).
 type UncordonNode struct {
 	CS    *kubernetes.Clientset
 	Nodes *nodes.Registry
@@ -286,7 +286,7 @@ func (t *UncordonNode) Execute(ctx context.Context, input map[string]any) (strin
 	return fmt.Sprintf("✅ Node %s marked as schedulable (uncordoned)", n.Name), nil
 }
 
-// ListPods: 列出指定 namespace 的 pod 数量和状态
+// ListPods lists pods in a namespace (or all namespaces).
 type ListPods struct {
 	CS *kubernetes.Clientset
 }
@@ -327,13 +327,13 @@ func (t *ListPods) Execute(ctx context.Context, input map[string]any) (string, e
 		namespace = "default"
 	}
 
-	// 如果是 "all"，查询所有 namespace
+	// When namespace is "all", query all namespaces
 	listNS := namespace
 	if namespace == "all" {
 		listNS = ""
 	}
 
-	// 构建 ListOptions
+	// Build ListOptions
 	listOpts := metav1.ListOptions{}
 	if labelSelector != "" {
 		listOpts.LabelSelector = labelSelector
@@ -347,7 +347,7 @@ func (t *ListPods) Execute(ctx context.Context, input map[string]any) (string, e
 		return "", fmt.Errorf("list pods: %w", err)
 	}
 
-	// Pod 详细信息
+	// Pod details
 	type podDetail struct {
 		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
@@ -357,14 +357,14 @@ func (t *ListPods) Execute(ctx context.Context, input map[string]any) (string, e
 		IP        string `json:"ip,omitempty"`
 	}
 
-	// 按状态分类
+	// Group pods by status
 	podsByStatus := make(map[string][]podDetail)
 	statusCount := make(map[string]int)
 
 	for _, pod := range pods.Items {
 		status := string(pod.Status.Phase)
 
-		// 计算重启次数
+		// Count restarts across all containers
 		var restarts int32
 		for _, cs := range pod.Status.ContainerStatuses {
 			restarts += cs.RestartCount
@@ -404,7 +404,7 @@ func (t *ListPods) Execute(ctx context.Context, input map[string]any) (string, e
 }
 
 
-// ListNamespaces: 列出集群中的所有 namespace
+// ListNamespaces lists all namespaces in the cluster.
 type ListNamespaces struct {
 	CS *kubernetes.Clientset
 }
@@ -465,7 +465,7 @@ func (t *ListNamespaces) Execute(ctx context.Context, _ map[string]any) (string,
 	return string(b), nil
 }
 
-// AnalyzePodLogs: 获取 pod 最后 1000 条日志用于分析
+// AnalyzePodLogs fetches the last 1000 log lines from a pod for error analysis.
 type AnalyzePodLogs struct {
 	CS *kubernetes.Clientset
 }

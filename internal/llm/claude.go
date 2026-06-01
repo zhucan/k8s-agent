@@ -1,5 +1,5 @@
-// Package llm 把 Anthropic SDK 包装成一个 Run 入口:接收用户文本,在内部跑 tool use 循环,
-// 直到模型给出 end_turn 的文本回复。
+// Package llm wraps the Anthropic SDK into a single Run entry point: receives user text,
+// runs an internal tool-use loop, and returns the final text reply when the model signals end_turn.
 package llm
 
 import (
@@ -25,21 +25,22 @@ type Client struct {
 	api              anthropic.Client
 	tools            *tool.Registry
 	system           string
-	systemGenerator  func() string // 动态生成 system prompt 的回调函数
+	systemGenerator  func() string // callback for dynamically generating the system prompt
 	model            anthropic.Model
 	enableCache      bool
 }
 
-// New 构造 Client。
-// 从环境变量自动读取:
-//   ANTHROPIC_API_KEY  - 必填 (SDK 默认行为)
-//   ANTHROPIC_BASE_URL - 可选,设置后请求会发到指定 base URL (用于代理网关 / Anthropic-compatible 服务)
-//   ANTHROPIC_MODEL    - 可选,指定使用的模型 (默认: claude-opus-4-7)
-//                        支持: claude-opus-4-7, claude-sonnet-4-6, claude-sonnet-3-5-20241022, claude-haiku-4-5-20251001
-//   ANTHROPIC_ENABLE_CACHE - 可选,是否启用 prompt caching (默认: true, 设为 false 禁用)
+// New constructs a Client.
+// Reads from environment variables automatically:
 //
-// systemPrompt 长度建议 >= 4096 tokens 以触发 prompt cache。
-// 如果 systemPrompt 为空字符串,则必须通过 SetSystemGenerator 设置动态生成函数。
+//	ANTHROPIC_API_KEY       - required (default SDK behaviour)
+//	ANTHROPIC_BASE_URL      - optional; routes requests to a proxy / Anthropic-compatible endpoint
+//	ANTHROPIC_MODEL         - optional; model to use (default: claude-opus-4-7)
+//	                          Supported: claude-opus-4-7, claude-sonnet-4-6, claude-sonnet-3-5-20241022, claude-haiku-4-5-20251001
+//	ANTHROPIC_ENABLE_CACHE  - optional; enable prompt caching (default: true; set to "false" to disable)
+//
+// systemPrompt should be >= 4096 tokens to benefit from prompt caching.
+// If systemPrompt is empty, SetSystemGenerator must be called before Run.
 func New(apiKey, systemPrompt string, reg *tool.Registry) *Client {
 	var opts []option.RequestOption
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
@@ -51,11 +52,11 @@ func New(apiKey, systemPrompt string, reg *tool.Registry) *Client {
 	}
 	api := anthropic.NewClient(opts...)
 
-	// 从环境变量读取模型配置
+	// Read model from environment variable
 	model := getModelFromEnv()
 	log.Printf("Using model: %s", model)
 
-	// 从环境变量读取 cache 配置
+	// Read cache config from environment variable
 	enableCache := os.Getenv("ANTHROPIC_ENABLE_CACHE") != "false"
 	if enableCache {
 		log.Printf("Prompt caching enabled")
@@ -72,19 +73,19 @@ func New(apiKey, systemPrompt string, reg *tool.Registry) *Client {
 	}
 }
 
-// SetSystemGenerator 设置动态 system prompt 生成函数(用于多集群模式)
+// SetSystemGenerator sets the dynamic system prompt generator (used in multi-cluster mode).
 func (c *Client) SetSystemGenerator(generator func() string) {
 	c.systemGenerator = generator
 }
 
-// getModelFromEnv 从环境变量读取模型配置,默认使用 claude-opus-4-7
+// getModelFromEnv reads the model from environment variable; defaults to claude-opus-4-7.
 func getModelFromEnv() anthropic.Model {
 	modelStr := os.Getenv("ANTHROPIC_MODEL")
 	if modelStr == "" {
 		return anthropic.ModelClaudeOpus4_7
 	}
 
-	// 支持的模型映射
+	// Supported model mapping
 	models := map[string]anthropic.Model{
 		"claude-opus-4-7":            anthropic.ModelClaudeOpus4_7,
 		"claude-sonnet-4-6":          anthropic.ModelClaudeSonnet4_6,
@@ -98,27 +99,27 @@ func getModelFromEnv() anthropic.Model {
 		return model
 	}
 
-	// 如果不在预定义列表中，直接使用字符串（支持自定义模型如 dj-claude-opus-4-7）
+	// If not in the predefined list, use the string directly (supports custom models like dj-claude-opus-4-7)
 	log.Printf("Using custom model: %s", modelStr)
 	return anthropic.Model(modelStr)
 }
 
-// Run 执行一次对话回合,返回最终文本回复。
+// Run executes one conversation turn and returns the final text reply.
 func (c *Client) Run(ctx context.Context, userText string) (string, error) {
 	tools := buildToolParams(c.tools)
 
-	// 动态生成 system prompt (用于多集群模式)
+	// Dynamically generate the system prompt (used in multi-cluster mode)
 	systemPrompt := c.system
 	if c.systemGenerator != nil {
 		systemPrompt = c.systemGenerator()
 	}
 
-	// 检查是否需要 workaround：某些 API 代理不支持 system + tools 组合
+	// Check if the system+tools workaround is needed (some API proxies don't support the combination)
 	useSystemWorkaround := os.Getenv("ANTHROPIC_SYSTEM_WORKAROUND") == "true"
 
 	var messages []anthropic.MessageParam
 	if useSystemWorkaround {
-		// Workaround: 将 system prompt 作为第一条 user message
+		// Workaround: inject the system prompt as the first user message
 		messages = []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(
 				"<system>\n" + systemPrompt + "\n</system>\n\n" + userText,
@@ -141,7 +142,7 @@ func (c *Client) Run(ctx context.Context, userText string) (string, error) {
 			Messages:  messages,
 		}
 
-		// 只在不使用 workaround 时添加 system prompt
+		// Only add the system prompt when not using the workaround
 		if !useSystemWorkaround {
 			var systemBlocks []anthropic.TextBlockParam
 			if c.enableCache {
@@ -164,12 +165,12 @@ func (c *Client) Run(ctx context.Context, userText string) (string, error) {
 		}
 		log.Printf("[LLM] Received response, stop_reason=%s", resp.StopReason)
 
-		// 把 assistant 回复追加到历史
+		// Append assistant reply to message history
 		messages = append(messages, resp.ToParam())
 
 		var textOut strings.Builder
 		var toolResults []anthropic.ContentBlockParamUnion
-		var finalResult string // 终结性工具的格式化输出
+		var finalResult string // formatted output from a final-result tool
 		for _, block := range resp.Content {
 			switch v := block.AsAny().(type) {
 			case anthropic.TextBlock:
@@ -177,7 +178,7 @@ func (c *Client) Run(ctx context.Context, userText string) (string, error) {
 			case anthropic.ToolUseBlock:
 				result, isErr, isFinal := c.execTool(ctx, v.Name, v.JSON.Input.Raw())
 				if isFinal && !isErr {
-					// 终结性工具:直接返回格式化结果,不再送回模型
+					// Final-result tool: return formatted result directly without sending back to model
 					finalResult = result
 				} else {
 					toolResults = append(toolResults,
@@ -186,17 +187,17 @@ func (c *Client) Run(ctx context.Context, userText string) (string, error) {
 			}
 		}
 
-		// 如果有终结性工具结果,直接返回
+		// Return immediately if a final-result tool produced output
 		if finalResult != "" {
 			return finalResult, nil
 		}
 
-		// 没有 tool_use,或模型已 end_turn,本回合结束
+		// No tool_use, or model signaled end_turn — this turn is complete
 		if resp.StopReason != anthropic.StopReasonToolUse {
 			return strings.TrimSpace(textOut.String()), nil
 		}
 
-		// 把 tool_result 作为新一轮 user message 发回
+		// Send tool_result back as the next user message
 		messages = append(messages, anthropic.NewUserMessage(toolResults...))
 	}
 
@@ -221,7 +222,7 @@ func (c *Client) execTool(ctx context.Context, name, rawJSON string) (string, bo
 		return err.Error(), true, false
 	}
 
-	// 检查是否是终结性工具
+	// Check whether the tool implements FinalResultFormatter
 	if formatter, ok := t.(tool.FinalResultFormatter); ok {
 		formatted := formatter.FormatFinalResult(out)
 		log.Printf("[tool] %s is final, returning formatted result directly", name)
@@ -241,8 +242,8 @@ func buildToolParams(reg *tool.Registry) []anthropic.ToolUnionParam {
 		schema := t.InputSchema()
 		props := schemaProperties(schema)
 
-		// 构造 InputSchema
-		// 注意：Type 字段默认为 "object"，不需要显式设置
+		// Build InputSchema
+		// Note: Type defaults to "object" and does not need to be set explicitly
 		inputSchema := anthropic.ToolInputSchemaParam{
 			Properties: props,
 		}
@@ -257,8 +258,8 @@ func buildToolParams(reg *tool.Registry) []anthropic.ToolUnionParam {
 	return out
 }
 
-// schemaProperties 从我们 tool.Tool 用的简化 schema 里抽出 properties 字段。
-// 这里允许 schema 本身就是 {type:"object", properties:{...}}, 兜底返回空 map。
+// schemaProperties extracts the "properties" field from the simplified schema used by tool.Tool.
+// Accepts schemas of the form {type:"object", properties:{...}}; falls back to an empty map.
 func schemaProperties(s map[string]any) map[string]any {
 	if p, ok := s["properties"].(map[string]any); ok {
 		return p

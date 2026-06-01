@@ -24,7 +24,7 @@ import (
 var (
 	larkClient      *lark.Client
 	components      *bot.Components
-	processedEvents = make(map[string]bool) // 用于去重
+	processedEvents = make(map[string]bool) // deduplication map
 	eventMutex      sync.Mutex
 )
 
@@ -43,11 +43,11 @@ func main() {
 	flag.BoolVar(&noLLM, "no-llm", false, "Disable LLM mode, use direct tool invocation (parse commands from user messages)")
 	flag.Parse()
 
-	// 飞书应用凭证
+	// Feishu app credentials
 	appID := bot.MustEnv("LARK_APP_ID")
 	appSecret := bot.MustEnv("LARK_APP_SECRET")
 
-	// 初始化 K8s 组件
+	// Initialize K8s components
 	ctx := context.Background()
 	components = bot.Setup(ctx, bot.Options{
 		Kubeconfig:    kubeconfigFlag,
@@ -66,10 +66,10 @@ func main() {
 		log.Printf("k8s-bot initialized in LLM Mode (nodes=%d)", len(components.Nodes.List()))
 	}
 
-	// 创建飞书客户端
+	// Create Feishu client
 	larkClient = lark.NewClient(appID, appSecret)
 
-	// 启动定时巡检告警
+	// Start scheduled health check alerts
 	if components.ClusterManager != nil {
 		alertChatID := os.Getenv("LARK_ALERT_CHAT_ID")
 		var mentionIDs []string
@@ -100,12 +100,12 @@ func main() {
 		})
 	}
 
-	// 创建事件处理器（参数必须为空字符串）
+	// Create event dispatcher (parameters must be empty strings)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(handleMessageEvent).
 		OnP2ChatMemberBotAddedV1(handleBotAddedEvent)
 
-	// 创建 WebSocket 长连接客户端
+	// Create WebSocket long-connection client
 	wsClient := larkws.NewClient(appID, appSecret,
 		larkws.WithEventHandler(eventHandler),
 		larkws.WithLogLevel(larkcore.LogLevelError),
@@ -116,7 +116,7 @@ func main() {
 			log.Println("[lark] WebSocket reconnected successfully")
 		}))
 
-	// 启动 WebSocket 长连接（阻塞主线程）
+	// Start WebSocket long connection (blocks main goroutine)
 	log.Println("🚀 Starting WebSocket long connection to Feishu...")
 	log.Println("✅ No public URL needed - using WebSocket long connection mode")
 	log.Println("📝 Waiting for messages from Feishu...")
@@ -131,12 +131,12 @@ func handleBotAddedEvent(ctx context.Context, event *larkim.P2ChatMemberBotAdded
 	return nil
 }
 
-// handleMessageEvent 处理接收到的消息事件
+// handleMessageEvent handles incoming message events.
 func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 	msg := event.Event.Message
 	sender := event.Event.Sender
 
-	// 获取事件 ID（用于去重）
+	// Get event ID for deduplication
 	eventID := ""
 	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
 		eventID = event.EventV2Base.Header.EventID
@@ -151,7 +151,7 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 	log.Printf("[lark] Type: %s", *msg.MessageType)
 	log.Printf("[lark] CreateTime: %s", *msg.CreateTime)
 
-	// 事件去重：检查是否已处理过此事件
+	// Deduplicate: skip events already processed
 	if eventID != "" {
 		eventMutex.Lock()
 		if processedEvents[eventID] {
@@ -163,19 +163,19 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 		eventMutex.Unlock()
 	}
 
-	// 忽略机器人自己发送的消息
+	// Ignore messages sent by the bot itself
 	if *sender.SenderType == "app" {
 		log.Printf("[lark] Message from bot itself, ignoring")
 		return nil
 	}
 
-	// 只处理文本消息
+	// Only handle text messages
 	if *msg.MessageType != "text" {
 		log.Printf("[lark] Non-text message, ignoring")
 		return nil
 	}
 
-	// 提取文本内容
+	// Extract text content
 	text := extractText(*msg.Content, msg.Mentions)
 	if text == "" {
 		log.Printf("[lark] Empty text, ignoring")
@@ -187,7 +187,7 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 
 	trimmedText := strings.TrimSpace(text)
 
-	// 处理查询
+	// Handle the incoming query
 	log.Printf("[lark] Processing query: %q", text)
 	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -201,14 +201,14 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 		specificTool := strings.TrimSpace(trimmedText[5:])
 		reply = showToolHelp(specificTool)
 	} else if isToolCommand(trimmedText) {
-		// 输入匹配工具名，直接执行
+		// Input matches a tool name — execute directly
 		reply, llmErr = processDirectToolCommand(runCtx, text)
 	} else if components.LLM != nil {
-		// 自然语言，走 LLM
+		// Natural language — route through LLM
 		reply, llmErr = components.LLM.Run(runCtx, text)
 	} else {
-		// 没有 LLM，提示用户用命令格式
-		reply = "❌ 无法识别命令\n\n请使用工具命令格式: <tool_name> [json_input]\n输入 'help' 查看所有可用工具"
+		// No LLM available — prompt user to use command format
+		reply = "❌ Unrecognized command\n\nUse tool command format: <tool_name> [json_input]\nType 'help' to see all available tools"
 	}
 
 	elapsed := time.Since(start)
@@ -220,20 +220,19 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 		log.Printf("[lark] LLM success after %v, reply length: %d", elapsed, len(reply))
 	}
 
-	// 回复结果
+	// Send reply
 	sendReply(ctx, msg, reply)
 	return nil
 }
 
-// sendReply 发送回复消息（自动选择文本或卡片格式）
+// sendReply sends a reply message (automatically selects text or card format).
 func sendReply(ctx context.Context, msg *larkim.EventMessage, reply string) {
 	log.Printf("[lark] Sending reply to message %s", *msg.MessageId)
 
-	// 尝试使用卡片消息格式
 	msgType := larkim.MsgTypeText
 	content := fmt.Sprintf(`{"text":"%s"}`, escapeJSON(reply))
 
-	// 如果回复内容看起来像是结构化数据，尝试转换为卡片消息
+	// If the reply looks like structured data, try formatting it as a card
 	if shouldUseCard(reply) {
 		if cardContent, err := formatAsCard(reply); err == nil {
 			msgType = larkim.MsgTypeInteractive
@@ -259,7 +258,7 @@ func sendReply(ctx context.Context, msg *larkim.EventMessage, reply string) {
 	}
 }
 
-// extractText 从消息内容中提取文本，并去除 @mention
+// extractText extracts text from message content and strips @mentions.
 func extractText(contentJSON string, mentions []*larkim.MentionEvent) string {
 	log.Printf("[extractText] raw contentJSON: %s", contentJSON)
 	log.Printf("[extractText] mentions count: %d", len(mentions))
@@ -276,19 +275,18 @@ func extractText(contentJSON string, mentions []*larkim.MentionEvent) string {
 	}
 
 	text := content.Text
-	// 去除 @mention 占位符
+	// Strip @mention placeholders
 	for _, mention := range mentions {
 		if mention.Key != nil {
 			text = strings.ReplaceAll(text, *mention.Key, "")
 		}
 	}
 
-	// 额外清理：去除所有 @_user_X 格式的文本
-	// 使用正则表达式或简单的字符串处理
+	// Additional cleanup: remove all @_user_X format tokens
 	words := strings.Fields(text)
 	var cleaned []string
 	for _, word := range words {
-		// 跳过 @_user_X 格式的占位符
+		// Skip @_user_X placeholder tokens
 		if strings.HasPrefix(word, "@_user_") {
 			continue
 		}
@@ -298,7 +296,7 @@ func extractText(contentJSON string, mentions []*larkim.MentionEvent) string {
 	return strings.TrimSpace(strings.Join(cleaned, " "))
 }
 
-// escapeJSON 转义 JSON 字符串中的特殊字符
+// escapeJSON escapes special characters in a JSON string value.
 func escapeJSON(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
@@ -308,13 +306,13 @@ func escapeJSON(s string) string {
 	return s
 }
 
-// shouldUseCard 判断是否应该使用卡片消息格式
+// shouldUseCard reports whether the reply should be sent as an interactive card.
 func shouldUseCard(reply string) bool {
-	// 如果包含特定的标记，使用卡片消息
+	// Use card format when the reply contains certain indicators
 	indicators := []string{
-		"📋", "📊", "🌐", "📦", "📁", // 列表类标记
-		"✅", "❌", "⚠️", // 状态标记
-		"节点状态", "集群列表", "Pod", "Namespace",
+		"📋", "📊", "🌐", "📦", "📁",
+		"✅", "❌", "⚠️",
+		"Node Status", "Cluster List", "Pod", "Namespace",
 	}
 
 	for _, indicator := range indicators {
@@ -323,14 +321,14 @@ func shouldUseCard(reply string) bool {
 		}
 	}
 
-	// 如果内容较长且包含多行，使用卡片消息
+	// Also use card format for long multi-line responses
 	lines := strings.Split(reply, "\n")
 	return len(lines) > 5
 }
 
-// formatAsCard 将文本格式化为卡片消息
+// formatAsCard formats a text reply as an interactive card message.
 func formatAsCard(reply string) (string, error) {
-	// 简单的卡片格式化
+	// Simple card formatting
 	card := map[string]interface{}{
 		"config": map[string]interface{}{
 			"wide_screen_mode": true,
@@ -346,7 +344,7 @@ func formatAsCard(reply string) (string, error) {
 		},
 	}
 
-	// 根据内容添加头部
+	// Add header based on content type
 	if header, template := detectHeader(reply); header != "" {
 		card["header"] = map[string]interface{}{
 			"title": map[string]interface{}{
@@ -365,7 +363,7 @@ func formatAsCard(reply string) (string, error) {
 	return string(data), nil
 }
 
-// detectHeader 检测并提取标题
+// detectHeader extracts a card header title and color template from the first line.
 func detectHeader(reply string) (string, string) {
 	lines := strings.Split(reply, "\n")
 	if len(lines) == 0 {
@@ -374,7 +372,7 @@ func detectHeader(reply string) (string, string) {
 
 	firstLine := strings.TrimSpace(lines[0])
 
-	// 检测标题和对应的颜色主题
+	// Map leading emoji to card color theme
 	headers := map[string]string{
 		"📋": "blue",
 		"📊": "blue",
@@ -396,9 +394,9 @@ func detectHeader(reply string) (string, string) {
 	return "", "blue"
 }
 
-// convertToMarkdown 转换文本为 Markdown 格式
+// convertToMarkdown converts plain text into Lark Markdown format.
 func convertToMarkdown(text string) string {
-	// 移除第一行（如果是标题）
+	// Remove the first line if it was used as a card header
 	lines := strings.Split(text, "\n")
 	if len(lines) > 0 {
 		firstLine := strings.TrimSpace(lines[0])
@@ -410,10 +408,10 @@ func convertToMarkdown(text string) string {
 		}
 	}
 
-	// 重新组合
+	// Rejoin remaining lines
 	result := strings.Join(lines, "\n")
 
-	// 转换 emoji 为文本标记（可选）
+	// Optional: convert emojis to text markers
 	// result = strings.ReplaceAll(result, "✅", "**[OK]**")
 	// result = strings.ReplaceAll(result, "❌", "**[ERROR]**")
 	// result = strings.ReplaceAll(result, "⚠️", "**[WARNING]**")
@@ -421,7 +419,7 @@ func convertToMarkdown(text string) string {
 	return strings.TrimSpace(result)
 }
 
-// isToolCommand 判断输入的第一个 token 是否匹配已注册的工具名
+// isToolCommand reports whether the first token of text matches a registered tool name.
 func isToolCommand(text string) bool {
 	parts := strings.SplitN(text, " ", 2)
 	if len(parts) == 0 {
@@ -432,38 +430,35 @@ func isToolCommand(text string) bool {
 	return found
 }
 
-// processDirectToolCommand 在非 LLM 模式下解析并执行工具命令
-// 格式: <tool_name> [json_input]
-// 示例: list_nodes {"filter":"unhealthy"}
-// 特殊命令: help [tool_name]
+// processDirectToolCommand parses and executes a tool command from user message text.
+// Format: <tool_name> [json_input]
+// Example: list_nodes {"filter":"unhealthy"}
+// Special: help [tool_name]
 func processDirectToolCommand(ctx context.Context, text string) (string, error) {
-	// 清理输入文本
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "❌ 命令为空\n\n格式: <tool_name> [json_input]\n示例: list_nodes {\"filter\":\"unhealthy\"}\n\n输入 'help' 查看所有可用工具", nil
+		return "❌ Empty command\n\nFormat: <tool_name> [json_input]\nExample: list_nodes {\"filter\":\"unhealthy\"}\n\nType 'help' to see all available tools", nil
 	}
 
-	// 解析命令: <tool_name> [json_input]
 	parts := strings.SplitN(text, " ", 2)
 	if len(parts) == 0 {
-		return "❌ 命令格式错误\n\n格式: <tool_name> [json_input]\n示例: list_nodes {\"filter\":\"unhealthy\"}\n\n输入 'help' 查看所有可用工具", nil
+		return "❌ Invalid command format\n\nFormat: <tool_name> [json_input]\nExample: list_nodes {\"filter\":\"unhealthy\"}\n\nType 'help' to see all available tools", nil
 	}
 
 	toolName := strings.TrimSpace(parts[0])
 
-	// 验证工具名称不为空且不包含特殊字符
 	if toolName == "" || strings.HasPrefix(toolName, "@") {
-		return "❌ 无效的工具名称\n\n格式: <tool_name> [json_input]\n示例: list_nodes {\"filter\":\"unhealthy\"}\n\n输入 'help' 查看所有可用工具", nil
+		return "❌ Invalid tool name\n\nFormat: <tool_name> [json_input]\nExample: list_nodes {\"filter\":\"unhealthy\"}\n\nType 'help' to see all available tools", nil
 	}
 
-	// 处理 help 命令
+	// Handle help command
 	if toolName == "help" {
 		if len(parts) > 1 {
-			// help <tool_name> - 显示特定工具的详细信息
+			// help <tool_name> — show detailed info
 			specificTool := strings.TrimSpace(parts[1])
 			return showToolHelp(specificTool), nil
 		}
-		// help - 显示所有工具列表
+		// help — show all tools list
 		return showAllTools(), nil
 	}
 
@@ -472,7 +467,7 @@ func processDirectToolCommand(ctx context.Context, text string) (string, error) 
 		inputJSON = strings.TrimSpace(parts[1])
 	}
 
-	// 查找工具
+	// Find the tool
 	var foundTool interface {
 		Name() string
 		Execute(context.Context, map[string]any) (string, error)
@@ -486,13 +481,11 @@ func processDirectToolCommand(ctx context.Context, text string) (string, error) 
 	}
 
 	if foundTool == nil {
-		// 工具未找到，列出所有可用工具
 		var toolList strings.Builder
-		toolList.WriteString(fmt.Sprintf("❌ 工具未找到: %s\n\n", toolName))
-		toolList.WriteString("可用工具:\n\n")
+		toolList.WriteString(fmt.Sprintf("❌ Tool not found: %s\n\n", toolName))
+		toolList.WriteString("Available tools:\n\n")
 
-		// 按类别分组
-		toolList.WriteString("集群管理:\n")
+		toolList.WriteString("Cluster Management:\n")
 		for _, t := range components.Tools.List() {
 			name := t.Name()
 			if strings.Contains(name, "cluster") {
@@ -500,7 +493,7 @@ func processDirectToolCommand(ctx context.Context, text string) (string, error) 
 			}
 		}
 
-		toolList.WriteString("\n节点管理:\n")
+		toolList.WriteString("\nNode Management:\n")
 		for _, t := range components.Tools.List() {
 			name := t.Name()
 			if strings.Contains(name, "node") || strings.Contains(name, "cordon") {
@@ -508,7 +501,7 @@ func processDirectToolCommand(ctx context.Context, text string) (string, error) 
 			}
 		}
 
-		toolList.WriteString("\n资源查询:\n")
+		toolList.WriteString("\nResource Queries:\n")
 		for _, t := range components.Tools.List() {
 			name := t.Name()
 			if strings.Contains(name, "pod") || strings.Contains(name, "namespace") {
@@ -516,7 +509,7 @@ func processDirectToolCommand(ctx context.Context, text string) (string, error) 
 			}
 		}
 
-		toolList.WriteString("\n硬件信息:\n")
+		toolList.WriteString("\nHardware Info:\n")
 		for _, t := range components.Tools.List() {
 			name := t.Name()
 			if strings.Contains(name, "k8s_") {
@@ -527,31 +520,28 @@ func processDirectToolCommand(ctx context.Context, text string) (string, error) 
 		return toolList.String(), nil
 	}
 
-	// 解析输入
 	var input map[string]any
 	if err := json.Unmarshal([]byte(inputJSON), &input); err != nil {
-		return fmt.Sprintf("❌ JSON 格式错误: %v\n\n输入的 JSON: %s", err, inputJSON), nil
+		return fmt.Sprintf("❌ Invalid JSON input: %v\n\nInput: %s", err, inputJSON), nil
 	}
 
-	// 执行工具
 	result, err := foundTool.Execute(ctx, input)
 	if err != nil {
-		return fmt.Sprintf("❌ 工具执行失败: %v", err), nil
+		return fmt.Sprintf("❌ Tool execution failed: %v", err), nil
 	}
 
 	return result, nil
 }
 
-// showAllTools 显示所有可用工具的列表
+// showAllTools returns a formatted list of all available tools grouped by category.
 func showAllTools() string {
 	var result strings.Builder
-	result.WriteString("📚 可用工具列表\n\n")
-	result.WriteString("使用方法: <tool_name> [json_input]\n")
-	result.WriteString("查看工具详情: help <tool_name>\n\n")
+	result.WriteString("📚 Available Tools\n\n")
+	result.WriteString("Usage: <tool_name> [json_input]\n")
+	result.WriteString("Tool details: help <tool_name>\n\n")
 
-	// 按类别分组显示
 	result.WriteString("═══════════════════════════════════\n")
-	result.WriteString("🌐 集群管理\n")
+	result.WriteString("🌐 Cluster Management\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range components.Tools.List() {
 		name := t.Name()
@@ -561,7 +551,7 @@ func showAllTools() string {
 	}
 
 	result.WriteString("\n═══════════════════════════════════\n")
-	result.WriteString("🖥️  节点管理\n")
+	result.WriteString("🖥️  Node Management\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range components.Tools.List() {
 		name := t.Name()
@@ -571,7 +561,7 @@ func showAllTools() string {
 	}
 
 	result.WriteString("\n═══════════════════════════════════\n")
-	result.WriteString("📦 资源查询\n")
+	result.WriteString("📦 Resource Queries\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range components.Tools.List() {
 		name := t.Name()
@@ -581,7 +571,7 @@ func showAllTools() string {
 	}
 
 	result.WriteString("\n═══════════════════════════════════\n")
-	result.WriteString("🔧 硬件信息\n")
+	result.WriteString("🔧 Hardware Info\n")
 	result.WriteString("═══════════════════════════════════\n")
 	for _, t := range components.Tools.List() {
 		name := t.Name()
@@ -590,15 +580,14 @@ func showAllTools() string {
 		}
 	}
 
-	result.WriteString("\n💡 提示: 输入 'help <tool_name>' 查看工具的详细参数说明\n")
-	result.WriteString("   示例: help list_nodes\n")
+	result.WriteString("\n💡 Tip: type 'help <tool_name>' for detailed parameter info\n")
+	result.WriteString("   Example: help list_nodes\n")
 
 	return result.String()
 }
 
-// showToolHelp 显示特定工具的详细帮助信息
+// showToolHelp returns detailed help for a specific tool.
 func showToolHelp(toolName string) string {
-	// 查找工具
 	var foundTool interface {
 		Name() string
 		Description() string
@@ -613,26 +602,24 @@ func showToolHelp(toolName string) string {
 	}
 
 	if foundTool == nil {
-		return fmt.Sprintf("❌ 工具未找到: %s\n\n输入 'help' 查看所有可用工具", toolName)
+		return fmt.Sprintf("❌ Tool not found: %s\n\nType 'help' to see all available tools", toolName)
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("📖 工具详情: %s\n\n", toolName))
+	result.WriteString(fmt.Sprintf("📖 Tool details: %s\n\n", toolName))
+	result.WriteString(fmt.Sprintf("Description:\n  %s\n\n", foundTool.Description()))
 
-	// 解析并显示参数 schema
 	schema := foundTool.InputSchema()
 	if props, ok := schema["properties"].(map[string]any); ok && len(props) > 0 {
-		result.WriteString("参数:\n")
+		result.WriteString("Parameters:\n")
 		for paramName, paramSchema := range props {
 			if ps, ok := paramSchema.(map[string]any); ok {
 				result.WriteString(fmt.Sprintf("  • %s", paramName))
 
-				// 参数类型
 				if paramType, ok := ps["type"].(string); ok {
 					result.WriteString(fmt.Sprintf(" (%s)", paramType))
 				}
 
-				// 是否必需
 				if required, ok := schema["required"].([]any); ok {
 					isRequired := false
 					for _, r := range required {
@@ -642,24 +629,22 @@ func showToolHelp(toolName string) string {
 						}
 					}
 					if isRequired {
-						result.WriteString(" [必需]")
+						result.WriteString(" [required]")
 					} else {
-						result.WriteString(" [可选]")
+						result.WriteString(" [optional]")
 					}
 				} else {
-					result.WriteString(" [可选]")
+					result.WriteString(" [optional]")
 				}
 
 				result.WriteString("\n")
 
-				// 参数描述
 				if desc, ok := ps["description"].(string); ok {
 					result.WriteString(fmt.Sprintf("    %s\n", desc))
 				}
 
-				// 枚举值
 				if enum, ok := ps["enum"].([]any); ok {
-					result.WriteString("    可选值: ")
+					result.WriteString("    Values: ")
 					enumStrs := make([]string, len(enum))
 					for i, e := range enum {
 						enumStrs[i] = fmt.Sprintf("%v", e)
@@ -672,18 +657,17 @@ func showToolHelp(toolName string) string {
 			}
 		}
 	} else {
-		result.WriteString("参数: 无需参数或使用默认值\n\n")
+		result.WriteString("Parameters: none required\n\n")
 	}
 
-	// 使用示例
-	result.WriteString("使用示例:\n")
+	result.WriteString("Examples:\n")
 	switch toolName {
 	case "list_nodes":
-		result.WriteString("  # 列出所有节点\n")
+		result.WriteString("  # List all nodes\n")
 		result.WriteString("  list_nodes\n\n")
-		result.WriteString("  # 只列出不健康的节点\n")
+		result.WriteString("  # List unhealthy nodes only\n")
 		result.WriteString("  list_nodes {\"filter\":\"unhealthy\"}\n\n")
-		result.WriteString("  # 只列出健康的节点\n")
+		result.WriteString("  # List healthy nodes only\n")
 		result.WriteString("  list_nodes {\"filter\":\"healthy\"}\n")
 	case "switch_cluster":
 		result.WriteString("  switch_cluster {\"cluster\":\"prod\"}\n")
@@ -691,11 +675,11 @@ func showToolHelp(toolName string) string {
 		result.WriteString("  node_status {\"node\":\"master-01\"}\n")
 		result.WriteString("  node_status {\"node\":\"10.1.1.83\"}\n")
 	case "list_pods":
-		result.WriteString("  # 列出所有命名空间的 Pod\n")
+		result.WriteString("  # List pods in all namespaces\n")
 		result.WriteString("  list_pods {\"namespace\":\"all\"}\n\n")
-		result.WriteString("  # 列出特定命名空间的 Pod\n")
+		result.WriteString("  # List pods in a specific namespace\n")
 		result.WriteString("  list_pods {\"namespace\":\"default\"}\n\n")
-		result.WriteString("  # 列出特定节点上的 Pod\n")
+		result.WriteString("  # List pods on a specific node\n")
 		result.WriteString("  list_pods {\"namespace\":\"all\",\"field_selector\":\"spec.nodeName=master-01\"}\n")
 	case "cordon_node":
 		result.WriteString("  cordon_node {\"name\":\"master-01\"}\n")

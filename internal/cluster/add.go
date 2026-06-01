@@ -8,19 +8,18 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// AddClusterFromKubeconfig 从 kubeconfig 文件内容添加集群到配置
-// 返回保存的 kubeconfig 文件路径和 context 名称
+// AddClusterFromKubeconfig adds a cluster to the config file from kubeconfig content.
+// Returns the saved kubeconfig file path and the context name.
 func AddClusterFromKubeconfig(configFile, name string, kubeconfigContent []byte) (string, string, error) {
-	// 解析 kubeconfig 获取 current-context
+	// Parse kubeconfig to get current-context
 	config, err := clientcmd.Load(kubeconfigContent)
 	if err != nil {
 		return "", "", fmt.Errorf("parse kubeconfig: %w", err)
 	}
 
-	// 获取 current-context
 	contextName := config.CurrentContext
 	if contextName == "" {
-		// 如果没有 current-context，使用第一个可用的 context
+		// Fall back to the first available context if current-context is not set
 		if len(config.Contexts) == 0 {
 			return "", "", fmt.Errorf("no contexts found in kubeconfig")
 		}
@@ -30,20 +29,20 @@ func AddClusterFromKubeconfig(configFile, name string, kubeconfigContent []byte)
 		}
 	}
 
-	// 创建持久化的 kubeconfig 文件目录
+	// Create the kubeconfigs directory alongside the config file
 	configDir := filepath.Dir(configFile)
 	kubeconfigDir := filepath.Join(configDir, "kubeconfigs")
 	if err := os.MkdirAll(kubeconfigDir, 0755); err != nil {
 		return "", "", fmt.Errorf("create kubeconfig dir: %w", err)
 	}
 
-	// 保存 kubeconfig 文件
+	// Save the kubeconfig file
 	kubeconfigPath := filepath.Join(kubeconfigDir, fmt.Sprintf("%s.yaml", name))
 	if err := os.WriteFile(kubeconfigPath, kubeconfigContent, 0600); err != nil {
 		return "", "", fmt.Errorf("write kubeconfig: %w", err)
 	}
 
-	// 加载现有配置（如果存在）
+	// Load existing config if present
 	var cfg *Config
 	if _, err := os.Stat(configFile); err == nil {
 		cfg, err = LoadConfig(configFile)
@@ -54,10 +53,9 @@ func AddClusterFromKubeconfig(configFile, name string, kubeconfigContent []byte)
 		cfg = &Config{Clusters: []ClusterConfig{}}
 	}
 
-	// 检查是否已存在相同名称
+	// Update existing entry if name already exists
 	for i, c := range cfg.Clusters {
 		if c.Name == name {
-			// 更新现有集群
 			cfg.Clusters[i] = ClusterConfig{
 				Name:       name,
 				Context:    contextName,
@@ -67,7 +65,7 @@ func AddClusterFromKubeconfig(configFile, name string, kubeconfigContent []byte)
 		}
 	}
 
-	// 添加新集群
+	// Append new cluster
 	cfg.Clusters = append(cfg.Clusters, ClusterConfig{
 		Name:       name,
 		Context:    contextName,

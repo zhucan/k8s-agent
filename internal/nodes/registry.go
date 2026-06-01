@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// Node 是给上层 tool 用的简化视图
+// Node is a simplified view of a cluster node exposed to tools.
 type Node struct {
 	Name       string   `json:"name"`
 	InternalIP string   `json:"internal_ip"`
@@ -22,14 +22,14 @@ type Node struct {
 	Roles      []string `json:"roles,omitempty"`
 }
 
-// Registry 维护一份从 K8s API 抓来的节点白名单,
-// 用户从飞书消息里给的"节点标识"(IP/hostname/node name) 必须能在这里查到才允许 SSH。
+// Registry maintains a node whitelist fetched from the K8s API.
+// Node identifiers supplied by the user (IP / hostname / node name) must resolve here before access is granted.
 type Registry struct {
 	cs *kubernetes.Clientset
 
 	mu       sync.RWMutex
 	nodes    []Node
-	byKey    map[string]Node // key 都是小写,可能是 IP / hostname / name
+	byKey    map[string]Node // keys are lowercase; may be IP, hostname, or name
 	loadedAt time.Time
 }
 
@@ -37,7 +37,7 @@ func New(cs *kubernetes.Clientset) *Registry {
 	return &Registry{cs: cs}
 }
 
-// Refresh 同步刷新一次白名单。启动时和后台定时各调一次。
+// Refresh performs a synchronous refresh of the whitelist. Called once at startup and periodically in the background.
 func (r *Registry) Refresh(ctx context.Context) error {
 	infos, err := k8s.ListNodes(ctx, r.cs)
 	if err != nil {
@@ -73,7 +73,7 @@ func (r *Registry) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// StartAutoRefresh 后台每 interval 刷新一次。返回的 stop 调用后停止。
+// StartAutoRefresh starts a background goroutine that refreshes the registry every interval.
 func (r *Registry) StartAutoRefresh(ctx context.Context, interval time.Duration) {
 	go func() {
 		t := time.NewTicker(interval)
@@ -91,8 +91,8 @@ func (r *Registry) StartAutoRefresh(ctx context.Context, interval time.Duration)
 	}()
 }
 
-// Resolve 把用户给的节点标识(IP / hostname / k8s node name)解析为白名单内的 Node。
-// 不在白名单返回 ErrUnknownNode。
+// Resolve maps a user-supplied node identifier (IP / hostname / K8s node name) to a whitelisted Node.
+// Returns an error if the identifier is not in the whitelist.
 func (r *Registry) Resolve(input string) (Node, error) {
 	key := strings.TrimSpace(strings.ToLower(input))
 	if key == "" {
@@ -103,7 +103,7 @@ func (r *Registry) Resolve(input string) (Node, error) {
 	if n, ok := r.byKey[key]; ok {
 		return n, nil
 	}
-	// 用户可能传了"10.0.0.5:9100"这种带端口形式
+	// Handle "host:port" form (e.g. "10.0.0.5:9100")
 	if ip, _, err := net.SplitHostPort(key); err == nil {
 		if n, ok := r.byKey[strings.ToLower(ip)]; ok {
 			return n, nil

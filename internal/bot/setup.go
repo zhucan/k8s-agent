@@ -1,5 +1,5 @@
-// Package bot 提供机器人的公共启动装配 (K8s 客户端 / 节点白名单 / tool 注册 / LLM 客户端 / system prompt)。
-// cmd/bot (飞书) 和 cmd/cli (终端测试) 共用。
+// Package bot provides shared startup wiring for the bot (K8s client, node whitelist,
+// tool registry, LLM client, and system prompt). Used by both cmd/bot (Feishu) and cmd/cli (terminal).
 package bot
 
 import (
@@ -22,42 +22,42 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// Options: 启动选项(从 flag/env 解析后传进来)
+// Options holds startup options parsed from flags/env.
 type Options struct {
 	Kubeconfig    string
-	Context       string // K8s context 名称(可选,为空则用 kubeconfig 默认 context)
-	MultiCluster  bool   // 是否启用多集群模式(飞书 bot 用)
-	ClusterConfig string // 集群配置文件路径(可选,用于自定义集群名称和别名)
-	NoLLM         bool   // 禁用 LLM，使用直接工具调用模式
+	Context       string // K8s context name (optional; defaults to kubeconfig's current context)
+	MultiCluster  bool   // enable multi-cluster mode (used by the Feishu bot)
+	ClusterConfig string // path to cluster config file (optional; for custom cluster names and aliases)
+	NoLLM         bool   // disable LLM mode and use direct tool invocation
 }
 
-// Components: 装配好的运行时组件
+// Components holds the assembled runtime components.
 type Components struct {
 	Nodes          *nodes.Registry
 	Tools          *tool.Registry
 	LLM            *llm.Client
-	Stop           context.CancelFunc // 取消后台 node refresh
-	ClusterManager *cluster.Manager   // 多集群管理器(MultiCluster=true 时可用)
+	Stop           context.CancelFunc // cancels background node refresh
+	ClusterManager *cluster.Manager   // multi-cluster manager (available when MultiCluster=true)
 }
 
-// Setup 跑完整初始化。失败直接 log.Fatalf,因为这些是启动必需。
-// ctx 用于后台 node refresh;调用方持有取消函数。
+// Setup runs full initialization. Calls log.Fatalf on any required failure.
+// ctx is used for background node refresh; the caller owns the cancel function.
 func Setup(parent context.Context, opts Options) *Components {
-	// 只有在启用 LLM 时才检查 API key
+	// Only require API key when LLM mode is enabled
 	if !opts.NoLLM && os.Getenv("ANTHROPIC_API_KEY") == "" {
 		log.Fatalf("ANTHROPIC_API_KEY is required (or use --no-llm to disable LLM mode)")
 	}
 
-	// 多集群模式
+	// Multi-cluster mode
 	if opts.MultiCluster {
 		return setupMultiCluster(parent, opts)
 	}
 
-	// 单集群模式(原有逻辑)
+	// Single-cluster mode (default CLI mode)
 	return setupSingleCluster(parent, opts)
 }
 
-// setupSingleCluster 单集群模式初始化(CLI 默认模式)
+// setupSingleCluster initializes single-cluster mode (default CLI mode).
 func setupSingleCluster(parent context.Context, opts Options) *Components {
 	// K8s
 	kcfg := k8s.ResolveKubeconfig(opts.Kubeconfig)
@@ -89,7 +89,7 @@ func setupSingleCluster(parent context.Context, opts Options) *Components {
 		}
 	}
 
-	// 节点白名单
+	// Node whitelist
 	ctx, cancel := context.WithCancel(parent)
 	nodeReg := nodes.New(cs)
 	if err := nodeReg.Refresh(ctx); err != nil {
@@ -117,7 +117,7 @@ func setupSingleCluster(parent context.Context, opts Options) *Components {
 	tr.Register(&builtin.CollectLogs{CS: cs, RestConfig: restConfig, Nodes: nodeReg})
 	tr.Register(&builtin.AnalyzePodLogs{CS: cs})
 
-	// LLM (只在非 NoLLM 模式下初始化)
+	// LLM (only initialized when LLM mode is enabled)
 	var llmClient *llm.Client
 	if !opts.NoLLM {
 		llmClient = llm.New("", buildSystemPrompt(nodeReg, tr, nil), tr)
@@ -131,14 +131,14 @@ func setupSingleCluster(parent context.Context, opts Options) *Components {
 	}
 }
 
-// setupMultiCluster 多集群模式初始化(飞书 bot 用)
+// setupMultiCluster initializes multi-cluster mode (used by the Feishu bot).
 func setupMultiCluster(parent context.Context, opts Options) *Components {
 	var clusterConfig *cluster.Config
 	var kubeconfigsDir string
 
-	// 优先使用 cluster-config 文件
+	// Prefer the cluster-config file if provided
 	if opts.ClusterConfig != "" {
-		// 同步 kubeconfigs 目录与 clusters.json
+		// Sync kubeconfigs directory with clusters.json
 		kubeconfigsDir = filepath.Join(filepath.Dir(opts.ClusterConfig), "kubeconfigs")
 		if info, err := os.Stat(kubeconfigsDir); err == nil && info.IsDir() {
 			synced, _, err := cluster.SyncConfigWithDir(opts.ClusterConfig, kubeconfigsDir)
@@ -150,7 +150,7 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 			}
 		}
 
-		// 如果 sync 没返回有效配置，正常加载
+		// If sync returned no valid config, load normally
 		if clusterConfig == nil {
 			var err error
 			clusterConfig, err = cluster.LoadConfig(opts.ClusterConfig)
@@ -160,7 +160,7 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 		}
 		log.Printf("loaded cluster config from %s", opts.ClusterConfig)
 	} else {
-		// 没有 cluster-config 时，从默认 kubeconfig 中读取 context 列表
+		// No cluster-config: read context list from the default kubeconfig
 		kcfg := k8s.ResolveKubeconfig(opts.Kubeconfig)
 		if kcfg == "" {
 			log.Fatalf("could not resolve kubeconfig (pass --kubeconfig, set KUBECONFIG, or use --cluster-config)")
@@ -182,11 +182,11 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 		log.Printf("using auto-generated cluster config from kubeconfig")
 	}
 
-	// 创建集群管理器
+	// Create cluster manager
 	ctx, cancel := context.WithCancel(parent)
 	mgr := cluster.NewManagerWithConfig(clusterConfig)
 
-	// 加载配置中的所有集群
+	// Load all clusters from config
 	loadedCount := 0
 	for _, clusterCfg := range clusterConfig.Clusters {
 		kubeconfigPath := clusterCfg.Kubeconfig
@@ -207,7 +207,7 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 		log.Fatalf("no valid clusters loaded")
 	}
 
-	// 获取当前集群
+	// Get current cluster
 	currentCluster, err := mgr.Current()
 	if err != nil {
 		cancel()
@@ -216,7 +216,7 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 
 	log.Printf("multi-cluster mode: loaded %d clusters, current=%s", loadedCount, mgr.CurrentName())
 
-	// 启动 kubeconfigs 目录监听（热加载）
+	// Start kubeconfigs directory watcher for hot-reload
 	if kubeconfigsDir != "" {
 		w := cluster.NewWatcher(ctx, kubeconfigsDir, opts.ClusterConfig, mgr)
 		if err := w.Start(); err != nil {
@@ -224,7 +224,7 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 		}
 	}
 
-	// Tool registry - 使用动态工具包装器
+	// Tool registry — use dynamic tool wrappers
 	tr := tool.NewRegistry()
 	tr.Register(&builtin.ListClusters{Manager: mgr})
 	tr.Register(&builtin.SwitchCluster{Manager: mgr})
@@ -250,11 +250,11 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 	// Pod log analysis
 	tr.Register(newDynamicAnalyzePodLogs(mgr))
 
-	// LLM (只在非 NoLLM 模式下初始化)
+	// LLM (only initialized when LLM mode is enabled)
 	var llmClient *llm.Client
 	if !opts.NoLLM {
 		llmClient = llm.New("", "", tr)
-		// 设置动态 system prompt 生成器
+		// Set dynamic system prompt generator
 		llmClient.SetSystemGenerator(func() string {
 			currentCluster, err := mgr.Current()
 			if err != nil {
@@ -274,7 +274,7 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 	}
 }
 
-// LoadDotEnv 简易 .env 加载;不存在不报错。flag.Parse 之前调用。
+// LoadDotEnv is a minimal .env loader; missing file is silently ignored. Call before flag.Parse.
 func LoadDotEnv(path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -304,7 +304,7 @@ func LoadDotEnv(path string) {
 	log.Printf("loaded env from %s", path)
 }
 
-// EnvOr 读环境变量,空则用 def
+// EnvOr returns the environment variable value, or def if unset.
 func EnvOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -312,7 +312,7 @@ func EnvOr(key, def string) string {
 	return def
 }
 
-// MustEnv 强制环境变量
+// MustEnv returns the environment variable value, or calls log.Fatalf if unset.
 func MustEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
@@ -321,7 +321,7 @@ func MustEnv(key string) string {
 	return v
 }
 
-// buildSystemPrompt 生成给 Claude 的系统提示
+// buildSystemPrompt generates the system prompt for Claude.
 func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Manager) string {
 	var b strings.Builder
 	b.WriteString(`你是一个 Kubernetes 集群运维助手机器人。
@@ -425,7 +425,7 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 	return b.String()
 }
 
-// ListContexts 列出 kubeconfig 中的所有 context (导出给 CLI 使用)
+// ListContexts lists all contexts in the kubeconfig (exported for CLI use).
 func ListContexts(kubeconfig string) ([]k8s.ContextInfo, error) {
 	return k8s.ListContexts(kubeconfig)
 }

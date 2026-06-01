@@ -9,7 +9,7 @@ import (
 	"github.com/k8s-inspect/internal/nodes"
 )
 
-// K8sHardwareInfo: 通过 K8s Pod 查询节点硬件信息（不需要 SSH）
+// K8sHardwareInfo queries node hardware info via a K8s Pod (no SSH required).
 type K8sHardwareInfo struct {
 	CS         *kubernetes.Clientset
 	RestConfig *rest.Config
@@ -50,7 +50,7 @@ lsblk -d -o NAME,SIZE,TYPE,MODEL | grep disk`
 	return executor.execOnNodeViaPod(ctx, n.Name, cmd)
 }
 
-// K8sCPUInfo: 通过 K8s Pod 查询节点 CPU 详细信息
+// K8sCPUInfo queries node CPU details via a K8s Pod.
 type K8sCPUInfo struct {
 	CS         *kubernetes.Clientset
 	RestConfig *rest.Config
@@ -83,7 +83,7 @@ func (t *K8sCPUInfo) Execute(ctx context.Context, input map[string]any) (string,
 	return executor.execOnNodeViaPod(ctx, n.Name, cmd)
 }
 
-// K8sNetworkInfo: 通过 K8s Pod 查询节点网卡信息
+// K8sNetworkInfo queries node network interface info via a K8s Pod.
 type K8sNetworkInfo struct {
 	CS         *kubernetes.Clientset
 	RestConfig *rest.Config
@@ -127,7 +127,7 @@ ip route show`
 	return executor.execOnNodeViaPod(ctx, n.Name, cmd)
 }
 
-// K8sMemoryInfo: 通过 K8s Pod 查询节点内存信息
+// K8sMemoryInfo queries node memory info via a K8s Pod.
 type K8sMemoryInfo struct {
 	CS         *kubernetes.Clientset
 	RestConfig *rest.Config

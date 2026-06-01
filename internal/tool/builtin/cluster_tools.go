@@ -9,7 +9,7 @@ import (
 	"github.com/k8s-inspect/internal/cluster"
 )
 
-// ListClusters: 列出所有可用的集群
+// ListClusters lists all available clusters.
 type ListClusters struct {
 	Manager *cluster.Manager
 }
@@ -42,7 +42,7 @@ func (t *ListClusters) Execute(ctx context.Context, _ map[string]any) (string, e
 	return fmt.Sprintf("%d clusters:\n%s", len(clusters), string(b)), nil
 }
 
-// SwitchCluster: 切换到指定集群
+// SwitchCluster switches to the specified cluster.
 type SwitchCluster struct {
 	Manager *cluster.Manager
 }
@@ -50,7 +50,7 @@ type SwitchCluster struct {
 func (t *SwitchCluster) Name() string { return "switch_cluster" }
 
 func (t *SwitchCluster) Description() string {
-	return "Switch to a different Kubernetes cluster. Supports cluster name, context name, alias, or fuzzy matching (e.g., 'prod', 'production', '生产集群')."
+	return "Switch to a different Kubernetes cluster. Supports cluster name, context name, alias, or fuzzy matching (e.g., 'prod', 'production', 'production-cluster')."
 }
 
 func (t *SwitchCluster) InputSchema() map[string]any {
@@ -80,7 +80,7 @@ func (t *SwitchCluster) Execute(ctx context.Context, input map[string]any) (stri
 	return fmt.Sprintf("✅ Switched to cluster %q (%d nodes)", clusterName, len(cluster.Nodes.List())), nil
 }
 
-// AddClusterToConfig: 添加集群到配置文件并热加载
+// AddClusterToConfig adds a cluster to the config file and hot-reloads it.
 type AddClusterToConfig struct {
 	ConfigFile string
 	Manager    *cluster.Manager
@@ -98,7 +98,7 @@ func (t *AddClusterToConfig) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"cluster_name": map[string]any{
 				"type":        "string",
-				"description": "The display name for the cluster (e.g., '生产环境', 'dev-cluster')",
+				"description": "The display name for the cluster (e.g., 'production', 'dev-cluster')",
 			},
 			"kubeconfig_content": map[string]any{
 				"type":        "string",
@@ -122,15 +122,15 @@ func (t *AddClusterToConfig) Execute(ctx context.Context, input map[string]any) 
 		return "", fmt.Errorf("cluster_name is required")
 	}
 
-	// 获取 kubeconfig 内容
+	// Resolve kubeconfig content
 	var content []byte
 	var err error
 
 	if kubeconfigContent != "" {
-		// 方式 1: 直接提供内容
+		// Option 1: content provided directly
 		content = []byte(kubeconfigContent)
 	} else if kubeconfigPath != "" {
-		// 方式 2: 从文件路径读取
+		// Option 2: read from file path
 		content, err = os.ReadFile(kubeconfigPath)
 		if err != nil {
 			return "", fmt.Errorf("read kubeconfig file: %w", err)
@@ -139,33 +139,33 @@ func (t *AddClusterToConfig) Execute(ctx context.Context, input map[string]any) 
 		return "", fmt.Errorf("either kubeconfig_content or kubeconfig_path is required")
 	}
 
-	// 1. 添加到配置文件并保存 kubeconfig
+	// Step 1: save kubeconfig and add to config file
 	savedPath, contextName, err := cluster.AddClusterFromKubeconfig(t.ConfigFile, clusterName, content)
 	if err != nil {
 		return "", fmt.Errorf("add cluster: %w", err)
 	}
 
-	// 2. 热加载：立即添加到 Manager
+	// Step 2: hot-reload — add immediately to Manager
 	if t.Manager != nil {
-		// 使用保存的 kubeconfig 路径、集群名称和解析出的 context
+		// Use the saved kubeconfig path, cluster name, and resolved context
 		if err := t.Manager.AddCluster(ctx, clusterName, savedPath, contextName); err != nil {
 			return "", fmt.Errorf("load cluster: %w", err)
 		}
 
-		// 获取集群信息
+		// Get cluster info
 		cluster, _ := t.Manager.Get(clusterName)
 		nodeCount := 0
 		if cluster != nil {
 			nodeCount = len(cluster.Nodes.List())
 		}
 
-		return fmt.Sprintf("✅ 集群 '%s' 已添加并加载成功\n📊 节点数量: %d\n\n💡 提示: 使用 switch_cluster 切换到新集群", clusterName, nodeCount), nil
+		return fmt.Sprintf("✅ Cluster '%s' added and loaded successfully\n📊 Nodes: %d\n\n💡 Use switch_cluster to switch to the new cluster", clusterName, nodeCount), nil
 	}
 
-	return fmt.Sprintf("✅ 集群 '%s' 已添加到配置文件\n\n💡 提示: 需要重启 bot 才能加载新集群", clusterName), nil
+	return fmt.Sprintf("✅ Cluster '%s' added to config file\n\n💡 Restart the bot to load the new cluster", clusterName), nil
 }
 
-// FindNodeInClusters: 在所有集群中搜索节点
+// FindNodeInClusters searches for a node across all clusters.
 type FindNodeInClusters struct {
 	Manager *cluster.Manager
 }
@@ -204,7 +204,7 @@ func (t *FindNodeInClusters) Execute(ctx context.Context, input map[string]any) 
 			continue
 		}
 
-		// 在该集群的节点列表中搜索
+		// Search for the node in this cluster's node list
 		for _, node := range cluster.Nodes.List() {
 			if node.Name == nodeIdentifier ||
 				node.InternalIP == nodeIdentifier ||
@@ -216,14 +216,14 @@ func (t *FindNodeInClusters) Execute(ctx context.Context, input map[string]any) 
 	}
 
 	if len(foundClusters) == 0 {
-		return fmt.Sprintf("❌ 节点 '%s' 在所有集群中都未找到", nodeIdentifier), nil
+		return fmt.Sprintf("❌ Node '%s' not found in any cluster", nodeIdentifier), nil
 	}
 
-	// 返回找到的集群名称（使用友好名称）
+	// Return the cluster name where the node was found
 	if len(foundClusters) == 1 {
 		return fmt.Sprintf("FOUND_IN_CLUSTER:%s", foundClusters[0]), nil
 	}
 
-	// 多个集群都有该节点，返回第一个
+	// Node found in multiple clusters — return the first one
 	return fmt.Sprintf("FOUND_IN_CLUSTER:%s", foundClusters[0]), nil
 }

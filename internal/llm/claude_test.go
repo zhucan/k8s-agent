@@ -7,7 +7,7 @@ import (
 	"github.com/k8s-inspect/internal/tool"
 )
 
-// mockTool 普通工具
+// mockTool is a plain tool for testing.
 type mockTool struct{}
 
 func (t *mockTool) Name() string                                              { return "mock_tool" }
@@ -17,7 +17,7 @@ func (t *mockTool) Execute(_ context.Context, _ map[string]any) (string, error) 
 	return "raw output", nil
 }
 
-// mockFinalTool 终结性工具
+// mockFinalTool is a final-result tool for testing.
 type mockFinalTool struct{}
 
 func (t *mockFinalTool) Name() string                                              { return "mock_final_tool" }
@@ -37,7 +37,7 @@ func TestExecTool_FinalResultFormatter(t *testing.T) {
 
 	c := &Client{tools: reg}
 
-	// 测试普通工具
+	// Test plain tool
 	result, isErr, isFinal := c.execTool(context.Background(), "mock_tool", "{}")
 	if isErr {
 		t.Errorf("expected no error for mock_tool")
@@ -49,7 +49,7 @@ func TestExecTool_FinalResultFormatter(t *testing.T) {
 		t.Errorf("expected 'raw output', got %q", result)
 	}
 
-	// 测试终结性工具
+	// Test final-result tool
 	result, isErr, isFinal = c.execTool(context.Background(), "mock_final_tool", "{}")
 	if isErr {
 		t.Errorf("expected no error for mock_final_tool")

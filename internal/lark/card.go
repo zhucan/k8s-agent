@@ -6,36 +6,36 @@ import (
 	"strings"
 )
 
-// CardBuilder 飞书卡片消息构建器
+// CardBuilder builds a Feishu (Lark) interactive card message.
 type CardBuilder struct {
 	header   *CardHeader
 	elements []CardElement
 	config   *CardConfig
 }
 
-// CardConfig 卡片配置
+// CardConfig holds card-level configuration.
 type CardConfig struct {
 	WideScreenMode bool `json:"wide_screen_mode"`
 }
 
-// CardHeader 卡片头部
+// CardHeader is the card title area.
 type CardHeader struct {
 	Title    *CardText `json:"title"`
 	Template string    `json:"template,omitempty"` // blue, wathet, turquoise, green, yellow, orange, red, carmine, violet, purple, indigo, grey
 }
 
-// CardText 文本元素
+// CardText is a text element.
 type CardText struct {
 	Tag     string `json:"tag"`
 	Content string `json:"content"`
 }
 
-// CardElement 卡片元素接口
+// CardElement is the interface for card content blocks.
 type CardElement interface {
 	GetTag() string
 }
 
-// CardDiv 文本块元素
+// CardDiv is a text/div block element.
 type CardDiv struct {
 	Tag  string                 `json:"tag"`
 	Text *CardText              `json:"text,omitempty"`
@@ -45,20 +45,20 @@ type CardDiv struct {
 
 func (d *CardDiv) GetTag() string { return d.Tag }
 
-// CardField 字段元素
+// CardField is a field element within a div (used for two-column layout).
 type CardField struct {
 	IsShort bool      `json:"is_short"`
 	Text    *CardText `json:"text"`
 }
 
-// CardHr 分割线元素
+// CardHr is a horizontal divider element.
 type CardHr struct {
 	Tag string `json:"tag"`
 }
 
 func (h *CardHr) GetTag() string { return h.Tag }
 
-// CardNote 备注元素
+// CardNote is a note/footer element (rendered as small grey text).
 type CardNote struct {
 	Tag      string      `json:"tag"`
 	Elements []*CardText `json:"elements"`
@@ -66,7 +66,7 @@ type CardNote struct {
 
 func (n *CardNote) GetTag() string { return n.Tag }
 
-// NewCardBuilder 创建卡片构建器
+// NewCardBuilder creates a new CardBuilder with wide-screen mode enabled.
 func NewCardBuilder() *CardBuilder {
 	return &CardBuilder{
 		config: &CardConfig{
@@ -76,7 +76,7 @@ func NewCardBuilder() *CardBuilder {
 	}
 }
 
-// SetHeader 设置卡片头部
+// SetHeader sets the card title and color template.
 func (b *CardBuilder) SetHeader(title string, template string) *CardBuilder {
 	b.header = &CardHeader{
 		Title: &CardText{
@@ -88,7 +88,7 @@ func (b *CardBuilder) SetHeader(title string, template string) *CardBuilder {
 	return b
 }
 
-// AddMarkdown 添加 Markdown 文本块
+// AddMarkdown adds a Markdown text block.
 func (b *CardBuilder) AddMarkdown(content string) *CardBuilder {
 	b.elements = append(b.elements, &CardDiv{
 		Tag: "div",
@@ -100,7 +100,7 @@ func (b *CardBuilder) AddMarkdown(content string) *CardBuilder {
 	return b
 }
 
-// AddPlainText 添加纯文本块
+// AddPlainText adds a plain text block.
 func (b *CardBuilder) AddPlainText(content string) *CardBuilder {
 	b.elements = append(b.elements, &CardDiv{
 		Tag: "div",
@@ -112,7 +112,7 @@ func (b *CardBuilder) AddPlainText(content string) *CardBuilder {
 	return b
 }
 
-// AddFields 添加字段列表（两列布局）
+// AddFields adds a two-column field list.
 func (b *CardBuilder) AddFields(fields map[string]string) *CardBuilder {
 	cardFields := make([]*CardField, 0, len(fields))
 	for key, value := range fields {
@@ -132,7 +132,7 @@ func (b *CardBuilder) AddFields(fields map[string]string) *CardBuilder {
 	return b
 }
 
-// AddDivider 添加分割线
+// AddDivider adds a horizontal divider line.
 func (b *CardBuilder) AddDivider() *CardBuilder {
 	b.elements = append(b.elements, &CardHr{
 		Tag: "hr",
@@ -140,7 +140,7 @@ func (b *CardBuilder) AddDivider() *CardBuilder {
 	return b
 }
 
-// AddNote 添加备注（灰色小字）
+// AddNote adds a note (small grey text) at the bottom.
 func (b *CardBuilder) AddNote(text string) *CardBuilder {
 	b.elements = append(b.elements, &CardNote{
 		Tag: "note",
@@ -154,7 +154,7 @@ func (b *CardBuilder) AddNote(text string) *CardBuilder {
 	return b
 }
 
-// Build 构建卡片 JSON
+// Build serializes the card to a JSON string.
 func (b *CardBuilder) Build() (string, error) {
 	card := map[string]interface{}{
 		"config":   b.config,
@@ -173,11 +173,10 @@ func (b *CardBuilder) Build() (string, error) {
 	return string(data), nil
 }
 
-// FormatNodeStatus 格式化节点状态为卡片消息
+// FormatNodeStatus formats a node's status as a card message.
 func FormatNodeStatus(nodeName, ip, status string, ready, schedulable bool) (string, error) {
 	builder := NewCardBuilder()
 
-	// 根据状态选择颜色主题
 	template := "green"
 	if !ready {
 		template = "red"
@@ -185,9 +184,8 @@ func FormatNodeStatus(nodeName, ip, status string, ready, schedulable bool) (str
 		template = "orange"
 	}
 
-	builder.SetHeader(fmt.Sprintf("节点状态: %s", nodeName), template)
+	builder.SetHeader(fmt.Sprintf("Node Status: %s", nodeName), template)
 
-	// 基本信息
 	statusIcon := "🔴"
 	if ready {
 		statusIcon = "🟢"
@@ -198,7 +196,7 @@ func FormatNodeStatus(nodeName, ip, status string, ready, schedulable bool) (str
 	}
 
 	builder.AddMarkdown(fmt.Sprintf(
-		"**IP:** %s\n**状态:** %s %s\n**调度:** %s %s",
+		"**IP:** %s\n**Status:** %s %s\n**Scheduling:** %s %s",
 		ip,
 		statusIcon, boolToText(ready, "Ready", "NotReady"),
 		scheduleIcon, boolToText(schedulable, "Schedulable", "Unschedulable"),
@@ -207,15 +205,14 @@ func FormatNodeStatus(nodeName, ip, status string, ready, schedulable bool) (str
 	return builder.Build()
 }
 
-// FormatNodeList 格式化节点列表为卡片消息
+// FormatNodeList formats a list of nodes as a card message.
 func FormatNodeList(clusterName string, nodes []NodeInfo) (string, error) {
 	builder := NewCardBuilder()
-	builder.SetHeader(fmt.Sprintf("集群节点列表: %s", clusterName), "blue")
+	builder.SetHeader(fmt.Sprintf("Cluster Node List: %s", clusterName), "blue")
 
-	builder.AddMarkdown(fmt.Sprintf("**节点总数:** %d", len(nodes)))
+	builder.AddMarkdown(fmt.Sprintf("**Total Nodes:** %d", len(nodes)))
 	builder.AddDivider()
 
-	// 按状态分组
 	readyNodes := []NodeInfo{}
 	notReadyNodes := []NodeInfo{}
 
@@ -227,7 +224,6 @@ func FormatNodeList(clusterName string, nodes []NodeInfo) (string, error) {
 		}
 	}
 
-	// Ready 节点
 	if len(readyNodes) > 0 {
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("**🟢 Ready (%d)**\n", len(readyNodes)))
@@ -241,7 +237,6 @@ func FormatNodeList(clusterName string, nodes []NodeInfo) (string, error) {
 		builder.AddMarkdown(sb.String())
 	}
 
-	// NotReady 节点
 	if len(notReadyNodes) > 0 {
 		builder.AddDivider()
 		var sb strings.Builder
@@ -255,12 +250,12 @@ func FormatNodeList(clusterName string, nodes []NodeInfo) (string, error) {
 	return builder.Build()
 }
 
-// FormatClusterList 格式化集群列表为卡片消息
+// FormatClusterList formats a list of clusters as a card message.
 func FormatClusterList(clusters []ClusterInfo, currentCluster string) (string, error) {
 	builder := NewCardBuilder()
-	builder.SetHeader("集群列表", "blue")
+	builder.SetHeader("Cluster List", "blue")
 
-	builder.AddMarkdown(fmt.Sprintf("**集群总数:** %d", len(clusters)))
+	builder.AddMarkdown(fmt.Sprintf("**Total Clusters:** %d", len(clusters)))
 	builder.AddDivider()
 
 	var sb strings.Builder
@@ -270,9 +265,9 @@ func FormatClusterList(clusters []ClusterInfo, currentCluster string) (string, e
 			icon = "●"
 		}
 		sb.WriteString(fmt.Sprintf("%s **%s**\n", icon, cluster.Name))
-		sb.WriteString(fmt.Sprintf("  节点数: %d\n", cluster.NodeCount))
+		sb.WriteString(fmt.Sprintf("  Nodes: %d\n", cluster.NodeCount))
 		if cluster.Name == currentCluster {
-			sb.WriteString("  (当前集群)\n")
+			sb.WriteString("  (current cluster)\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -281,7 +276,7 @@ func FormatClusterList(clusters []ClusterInfo, currentCluster string) (string, e
 	return builder.Build()
 }
 
-// FormatError 格式化错误消息为卡片
+// FormatError formats an error message as a card.
 func FormatError(title, message string) (string, error) {
 	builder := NewCardBuilder()
 	builder.SetHeader(title, "red")
@@ -289,7 +284,7 @@ func FormatError(title, message string) (string, error) {
 	return builder.Build()
 }
 
-// FormatSuccess 格式化成功消息为卡片
+// FormatSuccess formats a success message as a card.
 func FormatSuccess(title, message string) (string, error) {
 	builder := NewCardBuilder()
 	builder.SetHeader(title, "green")
@@ -297,7 +292,7 @@ func FormatSuccess(title, message string) (string, error) {
 	return builder.Build()
 }
 
-// NodeInfo 节点信息
+// NodeInfo holds basic node information for card rendering.
 type NodeInfo struct {
 	Name        string
 	IP          string
@@ -305,13 +300,12 @@ type NodeInfo struct {
 	Schedulable bool
 }
 
-// ClusterInfo 集群信息
+// ClusterInfo holds basic cluster information for card rendering.
 type ClusterInfo struct {
 	Name      string
 	NodeCount int
 }
 
-// 辅助函数
 func boolToText(value bool, trueText, falseText string) string {
 	if value {
 		return trueText
