@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	maxIter      = 8
+	maxIter      = 20
 	maxOutTokens = 4096
 )
 
