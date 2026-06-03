@@ -34,10 +34,19 @@ type unhealthyNode struct {
 	Schedulable bool
 }
 
+type gpuAnomalyNode struct {
+	Name        string
+	IP          string
+	GPUType     string
+	GPUCapacity int64
+	GPUExpected int64
+}
+
 type clusterResult struct {
 	Name           string
 	Total          int
 	UnhealthyNodes []unhealthyNode
+	GPUAnomalies   []gpuAnomalyNode
 	Error          string
 }
 
@@ -148,6 +157,60 @@ func runHealthCheck(ctx context.Context, cfg Config) {
 		if len(cr.UnhealthyNodes) > 0 {
 			hasUnhealthy = true
 		}
+
+		// Build a set of unhealthy node names to skip during GPU check
+		unhealthySet := make(map[string]bool, len(cr.UnhealthyNodes))
+		for _, n := range cr.UnhealthyNodes {
+			unhealthySet[n.Name] = true
+		}
+
+		// GPU check: only nodes with label deeproute.cn/instance-type=gpu
+		gpuCtx, gpuCancel := context.WithTimeout(ctx, 30*time.Second)
+		gpuNodeList, gpuErr := c.CS.CoreV1().Nodes().List(gpuCtx, metav1.ListOptions{
+			LabelSelector: "deeproute.cn/instance-type=gpu",
+		})
+		gpuCancel()
+		if gpuErr != nil {
+			log.Printf("[alert] Failed to list GPU nodes for cluster %s: %v", info.Name, gpuErr)
+		} else {
+			for i := range gpuNodeList.Items {
+				node := &gpuNodeList.Items[i]
+				if unhealthySet[node.Name] {
+					continue
+				}
+				if skipGPUInspect(node, info.Name) {
+					continue
+				}
+				q := node.Status.Capacity["nvidia.com/gpu"]
+				cap := q.Value()
+				if cap != 8 {
+					var ip string
+					for _, addr := range node.Status.Addresses {
+						if addr.Type == corev1.NodeInternalIP {
+							ip = addr.Address
+							break
+						}
+					}
+					gpuType := node.Labels["deeproute.cn/gpu-type"]
+					if gpuType == "" {
+						if idx := strings.LastIndex(node.Name, "."); idx >= 0 {
+							gpuType = node.Name[idx+1:]
+						}
+					}
+					cr.GPUAnomalies = append(cr.GPUAnomalies, gpuAnomalyNode{
+						Name:        node.Name,
+						IP:          ip,
+						GPUType:     gpuType,
+						GPUCapacity: cap,
+						GPUExpected: 8,
+					})
+				}
+			}
+			if len(cr.GPUAnomalies) > 0 {
+				hasUnhealthy = true
+			}
+		}
+
 		results = append(results, cr)
 	}
 
@@ -185,27 +248,38 @@ func buildAlertCard(results []clusterResult, hasUnhealthy bool, mentionIDs []str
 			continue
 		}
 
-		if len(cr.UnhealthyNodes) == 0 {
+		if len(cr.UnhealthyNodes) == 0 && len(cr.GPUAnomalies) == 0 {
 			section.WriteString(fmt.Sprintf("**Cluster: %s** ✅ All healthy (%d nodes)\n", cr.Name, cr.Total))
 			builder.AddMarkdown(section.String())
 			continue
 		}
 
-		section.WriteString(fmt.Sprintf("**Cluster: %s** ⚠️ %d unhealthy node(s) out of %d\n\n",
-			cr.Name, len(cr.UnhealthyNodes), cr.Total))
+		if len(cr.UnhealthyNodes) > 0 {
+			section.WriteString(fmt.Sprintf("**Cluster: %s** ⚠️ %d unhealthy node(s) out of %d\n\n",
+				cr.Name, len(cr.UnhealthyNodes), cr.Total))
+			for _, n := range cr.UnhealthyNodes {
+				status := ""
+				if !n.Ready {
+					status = "🔴 NotReady"
+				} else if !n.Schedulable {
+					status = "🟡 Unschedulable"
+				}
+				roleStr := ""
+				if len(n.Roles) > 0 {
+					roleStr = fmt.Sprintf(" [%s]", strings.Join(n.Roles, ","))
+				}
+				section.WriteString(fmt.Sprintf("• **%s** (%s)%s — %s\n", n.Name, n.IP, roleStr, status))
+			}
+		} else {
+			section.WriteString(fmt.Sprintf("**Cluster: %s** (%d nodes)\n", cr.Name, cr.Total))
+		}
 
-		for _, n := range cr.UnhealthyNodes {
-			status := ""
-			if !n.Ready {
-				status = "🔴 NotReady"
-			} else if !n.Schedulable {
-				status = "🟡 Unschedulable"
+		if len(cr.GPUAnomalies) > 0 {
+			section.WriteString(fmt.Sprintf("\n**GPU Anomalies** (%d node(s))\n", len(cr.GPUAnomalies)))
+			for _, g := range cr.GPUAnomalies {
+				section.WriteString(fmt.Sprintf("• **%s** (%s) [%s] — GPU capacity: %d, expected: %d\n",
+					g.Name, g.IP, g.GPUType, g.GPUCapacity, g.GPUExpected))
 			}
-			roleStr := ""
-			if len(n.Roles) > 0 {
-				roleStr = fmt.Sprintf(" [%s]", strings.Join(n.Roles, ","))
-			}
-			section.WriteString(fmt.Sprintf("• **%s** (%s)%s — %s\n", n.Name, n.IP, roleStr, status))
 		}
 
 		builder.AddMarkdown(section.String())
@@ -305,4 +379,36 @@ func resolveEmails(ctx context.Context, client *lark.Client, emails []string) []
 	}
 
 	return openIDs
+}
+
+func isEmbeddedGPUNode(node *corev1.Node) bool {
+	for _, v := range node.Labels {
+		lv := strings.ToLower(v)
+		if strings.Contains(lv, "orin") || strings.Contains(lv, "thor") || strings.Contains(lv, "jetson") {
+			return true
+		}
+	}
+	if ut := strings.ToLower(node.Labels["deeproute.cn/user-type"]); strings.Contains(ut, "desay") {
+		return true
+	}
+	return false
+}
+
+func skipGPUInspect(node *corev1.Node, clusterName string) bool {
+	if isEmbeddedGPUNode(node) {
+		return true
+	}
+	if clusterName == "cicd" {
+		it := strings.ToLower(node.Labels["instance-type"])
+		if strings.Contains(it, "2060") || strings.Contains(it, "3060") || strings.Contains(it, "a100") {
+			return true
+		}
+	}
+	if clusterName == "jobss" {
+		it := strings.ToLower(node.Labels["instance-type"])
+		if strings.Contains(it, "a30") {
+			return true
+		}
+	}
+	return false
 }

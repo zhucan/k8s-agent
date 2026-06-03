@@ -249,6 +249,8 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 	tr.Register(newDynamicCollectLogs(mgr))
 	// Pod log analysis
 	tr.Register(newDynamicAnalyzePodLogs(mgr))
+	// GPU inspection
+	tr.Register(&builtin.GPUInspect{Manager: mgr})
 
 	// LLM (only initialized when LLM mode is enabled)
 	var llmClient *llm.Client
