@@ -368,6 +368,12 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 		b.WriteString("   - 对每个集群依次执行：switch_cluster(cluster=<名称>) → list_nodes(filter=\"unhealthy\" 或 \"healthy\")\n")
 		b.WriteString("   - 汇总所有集群的结果后一次性回复用户，格式为：每个集群单独一段，标注集群名称\n")
 		b.WriteString("   - 查询完毕后，切回原来的集群（如果用户没有要求保持切换）\n\n")
+		b.WriteString("6. **巡检指定集群**：当用户说「巡检 XX 集群」、「检查 XX 集群」、「XX 集群的情况」等时，必须按以下流程：\n")
+		b.WriteString("   - switch_cluster 切换到目标集群\n")
+		b.WriteString("   - list_nodes(filter=\"unhealthy\") 检查不健康节点\n")
+		b.WriteString("   - gpu_inspect 检查 GPU 卡数是否异常\n")
+		b.WriteString("   - 汇总两项结果一起回复\n")
+		b.WriteString("   - 例外：用户明确说「只看 GPU」或「只巡检节点」时，只执行对应的单项检查\n\n")
 	}
 
 	b.WriteString(`## 工作原则
