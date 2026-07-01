@@ -158,10 +158,10 @@ func main() {
 		for _, t := range c.Tools.List() {
 			fmt.Fprintf(os.Stderr, "  - %s: %s\n", t.Name(), t.Description())
 		}
-		fmt.Fprintln(os.Stderr, "──────────────────────────────────────────\n")
+		fmt.Fprint(os.Stderr, "──────────────────────────────────────────\n\n")
 		fmt.Fprintln(os.Stderr, "Format: <tool_name> [json_input]")
 		fmt.Fprintln(os.Stderr, "Example: list_nodes {\"filter\":\"unhealthy\"}")
-		fmt.Fprintln(os.Stderr, "Type 'exit' to quit\n")
+		fmt.Fprint(os.Stderr, "Type 'exit' to quit\n\n")
 
 		runDirectMode(ctx, c)
 		return

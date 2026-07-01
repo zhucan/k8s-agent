@@ -125,6 +125,7 @@ func setupSingleCluster(parent context.Context, opts Options) *Components {
 	// NodePool CRD
 	tr.Register(&builtin.ListNodePools{RestConfig: restConfig})
 	tr.Register(&builtin.GetNodePool{RestConfig: restConfig, Nodes: nodeReg})
+	tr.Register(&builtin.ListPoolMembers{RestConfig: restConfig, CS: cs})
 	tr.Register(&builtin.AddNodeToPool{RestConfig: restConfig, CS: cs, Nodes: nodeReg})
 	tr.Register(&builtin.RemoveNodeFromPool{RestConfig: restConfig, CS: cs, Nodes: nodeReg})
 	tr.Register(&builtin.MoveNodeBetweenPools{RestConfig: restConfig, CS: cs, Nodes: nodeReg})
@@ -272,6 +273,7 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 	// NodePool CRD
 	tr.Register(newDynamicListNodePools(mgr))
 	tr.Register(newDynamicGetNodePool(mgr))
+	tr.Register(newDynamicListPoolMembers(mgr))
 	tr.Register(newDynamicAddNodeToPool(mgr))
 	tr.Register(newDynamicRemoveNodeFromPool(mgr))
 	tr.Register(newDynamicMoveNodeBetweenPools(mgr))
@@ -457,6 +459,13 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
   3. 完成后建议再调 list_node_labels + list_node_taints 复核控制器有没有把状态调过来（一般几秒内）
 - 只想加/去掉某一个 pool 归属时，用 add_node_to_pool / remove_node_from_pool。
 - **单独调 taint_node / label_node 只在少数场景下有意义**：临时打业务标签、加与 pool 无关的自定义 label/taint。改 pool 相关的键（user-type、nodepool、team 等）请一律走 NodePool。
+
+🚨 **节点归属的唯一判据是 label，不是 fixedNodes**：
+- 一个节点「在不在某个 pool 里」，**只看**节点上 drscaler.deeproute.ai/nodepool 这个 label 的 value。value 等于 pool 名 → 在里面；不等于或缺失 → 不在。
+- **禁止**拿 get_nodepool / list_nodepools 返回的 fixed_nodes 列表和节点 label 做对比、判断"脱节"、"漂移"、"缺失"、"不一致"。fixedNodes 只是写入端的输入，不代表当前节点归属。
+- 用户问"节点在不在 XX 池"、"XX 池有哪些节点"、"pool→节点 映射"这类问题时，**首选** list_pool_members(pool="<可选>")。它内部已经用 drscaler.deeproute.ai/nodepool label 过滤，绝不读 fixedNodes，直接可信。
+- 单个节点的归属可以直接 list_node_labels 看 label；不要用 get_nodepool 的 fixed_nodes 当依据。
+- **禁止**主动向用户报告 fixedNodes 与 label 之间的差异，也不要建议"用 add_node_to_pool 把这些节点补进去让 controller 接管"这类基于 fixedNodes 差集的操作。用户明确要求改归属时才调 NodePool 工具。
 
 参数识别与追问规则：
 1. 节点标识（name/IP/hostname）识别方式与其它工具一致，交给工具解析。

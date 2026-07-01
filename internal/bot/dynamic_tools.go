@@ -709,6 +709,32 @@ func (t *dynamicRemoveNodeFromPool) Execute(ctx context.Context, input map[strin
 	return tool.Execute(ctx, input)
 }
 
+// dynamicListPoolMembers
+type dynamicListPoolMembers struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicListPoolMembers(mgr *cluster.Manager) tool.Tool {
+	return &dynamicListPoolMembers{mgr: mgr}
+}
+
+func (t *dynamicListPoolMembers) Name() string { return "list_pool_members" }
+func (t *dynamicListPoolMembers) Description() string {
+	return (&builtin.ListPoolMembers{}).Description()
+}
+func (t *dynamicListPoolMembers) InputSchema() map[string]any {
+	return (&builtin.ListPoolMembers{}).InputSchema()
+}
+func (t *dynamicListPoolMembers) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.ListPoolMembers{RestConfig: c.RestConfig, CS: c.CS}
+	return tool.Execute(ctx, input)
+}
+
 // dynamicMoveNodeBetweenPools
 type dynamicMoveNodeBetweenPools struct {
 	mgr *cluster.Manager
