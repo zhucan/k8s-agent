@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 
+	"github.com/k8s-inspect/internal/authz"
 	"github.com/k8s-inspect/internal/cluster"
 	"github.com/k8s-inspect/internal/tool"
 	"github.com/k8s-inspect/internal/tool/builtin"
@@ -147,6 +148,162 @@ func (t *dynamicUncordonNode) Execute(ctx context.Context, input map[string]any)
 		return "", err
 	}
 	tool := &builtin.UncordonNode{CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicListNodeTaints
+type dynamicListNodeTaints struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicListNodeTaints(mgr *cluster.Manager) tool.Tool {
+	return &dynamicListNodeTaints{mgr: mgr}
+}
+
+func (t *dynamicListNodeTaints) Name() string { return "list_node_taints" }
+func (t *dynamicListNodeTaints) Description() string {
+	return (&builtin.ListNodeTaints{}).Description()
+}
+func (t *dynamicListNodeTaints) InputSchema() map[string]any {
+	return (&builtin.ListNodeTaints{}).InputSchema()
+}
+func (t *dynamicListNodeTaints) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.ListNodeTaints{CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicTaintNode
+type dynamicTaintNode struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicTaintNode(mgr *cluster.Manager) tool.Tool {
+	return &dynamicTaintNode{mgr: mgr}
+}
+
+func (t *dynamicTaintNode) Name() string { return "taint_node" }
+func (t *dynamicTaintNode) Description() string {
+	return (&builtin.TaintNode{}).Description()
+}
+func (t *dynamicTaintNode) InputSchema() map[string]any {
+	return (&builtin.TaintNode{}).InputSchema()
+}
+func (t *dynamicTaintNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.TaintNode{CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicUntaintNode
+type dynamicUntaintNode struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicUntaintNode(mgr *cluster.Manager) tool.Tool {
+	return &dynamicUntaintNode{mgr: mgr}
+}
+
+func (t *dynamicUntaintNode) Name() string { return "untaint_node" }
+func (t *dynamicUntaintNode) Description() string {
+	return (&builtin.UntaintNode{}).Description()
+}
+func (t *dynamicUntaintNode) InputSchema() map[string]any {
+	return (&builtin.UntaintNode{}).InputSchema()
+}
+func (t *dynamicUntaintNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.UntaintNode{CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicListNodeLabels
+type dynamicListNodeLabels struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicListNodeLabels(mgr *cluster.Manager) tool.Tool {
+	return &dynamicListNodeLabels{mgr: mgr}
+}
+
+func (t *dynamicListNodeLabels) Name() string { return "list_node_labels" }
+func (t *dynamicListNodeLabels) Description() string {
+	return (&builtin.ListNodeLabels{}).Description()
+}
+func (t *dynamicListNodeLabels) InputSchema() map[string]any {
+	return (&builtin.ListNodeLabels{}).InputSchema()
+}
+func (t *dynamicListNodeLabels) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.ListNodeLabels{CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicLabelNode
+type dynamicLabelNode struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicLabelNode(mgr *cluster.Manager) tool.Tool {
+	return &dynamicLabelNode{mgr: mgr}
+}
+
+func (t *dynamicLabelNode) Name() string { return "label_node" }
+func (t *dynamicLabelNode) Description() string {
+	return (&builtin.LabelNode{}).Description()
+}
+func (t *dynamicLabelNode) InputSchema() map[string]any {
+	return (&builtin.LabelNode{}).InputSchema()
+}
+func (t *dynamicLabelNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.LabelNode{CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicUnlabelNode
+type dynamicUnlabelNode struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicUnlabelNode(mgr *cluster.Manager) tool.Tool {
+	return &dynamicUnlabelNode{mgr: mgr}
+}
+
+func (t *dynamicUnlabelNode) Name() string { return "unlabel_node" }
+func (t *dynamicUnlabelNode) Description() string {
+	return (&builtin.UnlabelNode{}).Description()
+}
+func (t *dynamicUnlabelNode) InputSchema() map[string]any {
+	return (&builtin.UnlabelNode{}).InputSchema()
+}
+func (t *dynamicUnlabelNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.UnlabelNode{CS: c.CS, Nodes: c.Nodes}
 	return tool.Execute(ctx, input)
 }
 
@@ -445,6 +602,136 @@ func (t *dynamicAnalyzePodLogs) Execute(ctx context.Context, input map[string]an
 		return "", err
 	}
 	tool := &builtin.AnalyzePodLogs{CS: c.CS}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicListNodePools
+type dynamicListNodePools struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicListNodePools(mgr *cluster.Manager) tool.Tool {
+	return &dynamicListNodePools{mgr: mgr}
+}
+
+func (t *dynamicListNodePools) Name() string { return "list_nodepools" }
+func (t *dynamicListNodePools) Description() string {
+	return (&builtin.ListNodePools{}).Description()
+}
+func (t *dynamicListNodePools) InputSchema() map[string]any {
+	return (&builtin.ListNodePools{}).InputSchema()
+}
+func (t *dynamicListNodePools) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.ListNodePools{RestConfig: c.RestConfig}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicGetNodePool
+type dynamicGetNodePool struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicGetNodePool(mgr *cluster.Manager) tool.Tool {
+	return &dynamicGetNodePool{mgr: mgr}
+}
+
+func (t *dynamicGetNodePool) Name() string { return "get_nodepool" }
+func (t *dynamicGetNodePool) Description() string {
+	return (&builtin.GetNodePool{}).Description()
+}
+func (t *dynamicGetNodePool) InputSchema() map[string]any {
+	return (&builtin.GetNodePool{}).InputSchema()
+}
+func (t *dynamicGetNodePool) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.GetNodePool{RestConfig: c.RestConfig, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicAddNodeToPool
+type dynamicAddNodeToPool struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicAddNodeToPool(mgr *cluster.Manager) tool.Tool {
+	return &dynamicAddNodeToPool{mgr: mgr}
+}
+
+func (t *dynamicAddNodeToPool) Name() string { return "add_node_to_pool" }
+func (t *dynamicAddNodeToPool) Description() string {
+	return (&builtin.AddNodeToPool{}).Description()
+}
+func (t *dynamicAddNodeToPool) InputSchema() map[string]any {
+	return (&builtin.AddNodeToPool{}).InputSchema()
+}
+func (t *dynamicAddNodeToPool) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.AddNodeToPool{RestConfig: c.RestConfig, CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicRemoveNodeFromPool
+type dynamicRemoveNodeFromPool struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicRemoveNodeFromPool(mgr *cluster.Manager) tool.Tool {
+	return &dynamicRemoveNodeFromPool{mgr: mgr}
+}
+
+func (t *dynamicRemoveNodeFromPool) Name() string { return "remove_node_from_pool" }
+func (t *dynamicRemoveNodeFromPool) Description() string {
+	return (&builtin.RemoveNodeFromPool{}).Description()
+}
+func (t *dynamicRemoveNodeFromPool) InputSchema() map[string]any {
+	return (&builtin.RemoveNodeFromPool{}).InputSchema()
+}
+func (t *dynamicRemoveNodeFromPool) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.RemoveNodeFromPool{RestConfig: c.RestConfig, CS: c.CS, Nodes: c.Nodes}
+	return tool.Execute(ctx, input)
+}
+
+// dynamicMoveNodeBetweenPools
+type dynamicMoveNodeBetweenPools struct {
+	mgr *cluster.Manager
+}
+
+func newDynamicMoveNodeBetweenPools(mgr *cluster.Manager) tool.Tool {
+	return &dynamicMoveNodeBetweenPools{mgr: mgr}
+}
+
+func (t *dynamicMoveNodeBetweenPools) Name() string { return "move_node_between_pools" }
+func (t *dynamicMoveNodeBetweenPools) Description() string {
+	return (&builtin.MoveNodeBetweenPools{}).Description()
+}
+func (t *dynamicMoveNodeBetweenPools) InputSchema() map[string]any {
+	return (&builtin.MoveNodeBetweenPools{}).InputSchema()
+}
+func (t *dynamicMoveNodeBetweenPools) Execute(ctx context.Context, input map[string]any) (string, error) {
+	c, err := t.mgr.Current()
+	if err != nil {
+		return "", err
+	}
+	ctx = authz.WithClusterName(ctx, t.mgr.CurrentName())
+	tool := &builtin.MoveNodeBetweenPools{RestConfig: c.RestConfig, CS: c.CS, Nodes: c.Nodes}
 	return tool.Execute(ctx, input)
 }
 

@@ -105,6 +105,12 @@ func setupSingleCluster(parent context.Context, opts Options) *Components {
 	tr.Register(&builtin.NodeStatus{CS: cs, Nodes: nodeReg})
 	tr.Register(&builtin.CordonNode{CS: cs, Nodes: nodeReg})
 	tr.Register(&builtin.UncordonNode{CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.ListNodeTaints{CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.TaintNode{CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.UntaintNode{CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.ListNodeLabels{CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.LabelNode{CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.UnlabelNode{CS: cs, Nodes: nodeReg})
 	tr.Register(&builtin.ListPods{CS: cs})
 	tr.Register(&builtin.ListNamespaces{CS: cs})
 	// K8s-based hardware tools (no SSH required)
@@ -116,6 +122,12 @@ func setupSingleCluster(parent context.Context, opts Options) *Components {
 	tr.Register(&builtin.DiagnoseNode{CS: cs, RestConfig: restConfig, Nodes: nodeReg})
 	tr.Register(&builtin.CollectLogs{CS: cs, RestConfig: restConfig, Nodes: nodeReg})
 	tr.Register(&builtin.AnalyzePodLogs{CS: cs})
+	// NodePool CRD
+	tr.Register(&builtin.ListNodePools{RestConfig: restConfig})
+	tr.Register(&builtin.GetNodePool{RestConfig: restConfig, Nodes: nodeReg})
+	tr.Register(&builtin.AddNodeToPool{RestConfig: restConfig, CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.RemoveNodeFromPool{RestConfig: restConfig, CS: cs, Nodes: nodeReg})
+	tr.Register(&builtin.MoveNodeBetweenPools{RestConfig: restConfig, CS: cs, Nodes: nodeReg})
 
 	// LLM (only initialized when LLM mode is enabled)
 	var llmClient *llm.Client
@@ -237,6 +249,12 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 	tr.Register(newDynamicNodeStatus(mgr))
 	tr.Register(newDynamicCordonNode(mgr))
 	tr.Register(newDynamicUncordonNode(mgr))
+	tr.Register(newDynamicListNodeTaints(mgr))
+	tr.Register(newDynamicTaintNode(mgr))
+	tr.Register(newDynamicUntaintNode(mgr))
+	tr.Register(newDynamicListNodeLabels(mgr))
+	tr.Register(newDynamicLabelNode(mgr))
+	tr.Register(newDynamicUnlabelNode(mgr))
 	tr.Register(newDynamicListPods(mgr))
 	tr.Register(newDynamicListNamespaces(mgr))
 	// K8s-based hardware tools (no SSH required)
@@ -251,6 +269,12 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 	tr.Register(newDynamicAnalyzePodLogs(mgr))
 	// GPU inspection
 	tr.Register(&builtin.GPUInspect{Manager: mgr})
+	// NodePool CRD
+	tr.Register(newDynamicListNodePools(mgr))
+	tr.Register(newDynamicGetNodePool(mgr))
+	tr.Register(newDynamicAddNodeToPool(mgr))
+	tr.Register(newDynamicRemoveNodeFromPool(mgr))
+	tr.Register(newDynamicMoveNodeBetweenPools(mgr))
 
 	// LLM (only initialized when LLM mode is enabled)
 	var llmClient *llm.Client
@@ -409,7 +433,46 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 	b.WriteString("- 节点是否被 cordon，**只能**根据 list_nodes 返回的 `cordoned` 字段判断（true = 被 cordon）\n")
 	b.WriteString("- `ready: false` 表示节点 NotReady（节点故障），**不等于** 被 cordon\n")
 	b.WriteString("- cordon 是人为操作，**不代表节点故障**\n\n")
-	b.WriteString(`## 🚨 重要：查询特定节点上的 Pod
+	b.WriteString(`## 🚨 重要：节点污点（Taint）管理
+用户涉及"污点 / taint / 打 taint / 加污点 / 去掉污点 / 移除 taint / 查看污点"等说法时，使用以下三个工具，**不要**和 cordon / uncordon / label 混淆：
+
+- 查看节点污点：list_node_taints(node="<节点>")
+- 添加/更新污点：taint_node(node="<节点>", key="<key>", value="<value>", effect="<NoSchedule|PreferNoSchedule|NoExecute>")
+  - value 可选（缺省表示空值）；同 key+effect 已存在时会覆盖 value
+- 移除污点：untaint_node(node="<节点>", key="<key>", effect="<可选>")
+  - 不传 effect 表示删除该 key 下所有 effect 的污点
+
+🚨 **权限与安全边界（必须遵守）**：
+- **禁止**对 master / control-plane 节点执行 taint_node / untaint_node / label_node / unlabel_node（例如 node name 含 "master"、"control-plane"，或 list_nodes 里 roles 含 master/control-plane 的节点）。用户要求时直接拒绝并说明「master 节点受保护」，**不要**调用工具。list_node_taints / list_node_labels 查看则允许。
+- 只有获授权的飞书人员才能改污点和 label。工具会自行检查用户身份，无权限时会返回 "permission denied"，请把该错误原样告诉用户，让其联系管理员加白名单，**不要**再重试。
+- 每次改污点/label 前后建议调对应的 list_ 工具展示当前状态，便于用户核对。
+- **务必确认集群上下文**：所有 taint / label 相关工具均只在「当前集群」执行。用户如果提到"XX 集群的 YY 节点"，必须先 switch_cluster 再操作；如果只给节点 IP 而未指定集群，可用 find_node_in_clusters 定位。工具返回体里带 cluster=<名称> 字段（或 JSON 里的 cluster 字段），请把它一并展示给用户，避免张冠李戴。
+
+🚨 **taint 与 label 的联动 — 用 NodePool 工具，别自己改 label/taint**：
+本集群跑着 drscaler 的 NodePool 控制器。它按 NodePool CR 的 spec.configuration.fixedNodes 列表把节点的 label（deeproute.cn/user-type、drscaler.deeproute.ai/nodepool 等）和 taint（cloud.deeproute.cn/team 等）**反查回目标值**。也就是说：
+- **只改 label/taint 是白改**：控制器几秒内就会用它认定的目标值覆盖回来。taint_node / label_node 工具已经在响应里做了验证，遇到这种情况会返回 "appeared to succeed but ... is NOT present ... likely reverted it"，请原样告诉用户，**不要**假装成功。
+- **改归属的正确姿势是改 NodePool**：用户说"把 XX 节点从 simulation 池挪到 mlp 池"、"改成 XX team"、"改归属"、"迁池子"、"从 A 池挪到 B 池"等，一律用 NodePool 工具，不要直接调 label_node / taint_node：
+  1. 先 list_nodepools 看当前有哪些池 → 或者 get_nodepool(name=<池>) 确认节点是不是在里面
+  2. 用 move_node_between_pools(node=<节点>, from_pool=<源池>, to_pool=<目标池>) 一步完成
+  3. 完成后建议再调 list_node_labels + list_node_taints 复核控制器有没有把状态调过来（一般几秒内）
+- 只想加/去掉某一个 pool 归属时，用 add_node_to_pool / remove_node_from_pool。
+- **单独调 taint_node / label_node 只在少数场景下有意义**：临时打业务标签、加与 pool 无关的自定义 label/taint。改 pool 相关的键（user-type、nodepool、team 等）请一律走 NodePool。
+
+参数识别与追问规则：
+1. 节点标识（name/IP/hostname）识别方式与其它工具一致，交给工具解析。
+2. **effect 是必填**（taint_node）。用户没说 effect 时，先追问一次，默认建议 NoSchedule；不要擅自假设。
+3. 用户一次列出多组 key/value/effect 时，逐条调用 taint_node，每次只处理一组。
+4. 用户可能只给「key=value:effect」这种 kubectl 风格字符串，请解析为对应参数。
+5. 操作前后如需确认，先/后调用 list_node_taints 展示节点当前污点。
+6. 涉及去污点但没指定 effect 时，可以调 list_node_taints 让用户/自己确认后再操作。
+
+示例：
+- "给 node-a 打 nvidia.com/gpu=4090:NoSchedule 污点" → taint_node(node="node-a", key="nvidia.com/gpu", value="4090", effect="NoSchedule")
+- "在 node-a 加 team=simulation 污点，不允许调度" → taint_node(node="node-a", key="cloud.deeproute.cn/team", value="simulation", effect="NoSchedule")（若 key 不全，先追问）
+- "去掉 node-a 的 nvidia.com/gpu 污点" → untaint_node(node="node-a", key="nvidia.com/gpu")
+- "看下 node-a 有哪些污点" → list_node_taints(node="node-a")
+
+## 🚨 重要：查询特定节点上的 Pod
 当用户要求查看**特定节点**上的 Pod 时（例如："列出 master-03 节点上的 pod"、"master-01 的 pod"、"node-1 上有哪些 pod"），
 你**必须**使用 list_pods 工具的 field_selector 参数来过滤，**不要**查询所有 Pod 后再手动筛选。
 

@@ -18,7 +18,9 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/k8s-inspect/internal/alert"
+	"github.com/k8s-inspect/internal/authz"
 	"github.com/k8s-inspect/internal/bot"
+	larkctl "github.com/k8s-inspect/internal/lark"
 )
 
 var (
@@ -46,6 +48,32 @@ func main() {
 	// Feishu app credentials
 	appID := bot.MustEnv("LARK_APP_ID")
 	appSecret := bot.MustEnv("LARK_APP_SECRET")
+
+	// Resolve LARK_TAINT_ALLOWED_EMAILS → open_ids and register them for
+	// permission checks. LARK_TAINT_ALLOWED_OPENIDS is still honored as a
+	// fallback / additive source.
+	if raw := strings.TrimSpace(os.Getenv("LARK_TAINT_ALLOWED_EMAILS")); raw != "" {
+		emails := make([]string, 0)
+		for _, e := range strings.Split(raw, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				emails = append(emails, e)
+			}
+		}
+		if len(emails) > 0 {
+			resolveCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			openIDs, unresolved, err := larkctl.ResolveOpenIDsByEmail(resolveCtx, appID, appSecret, emails)
+			cancel()
+			if err != nil {
+				log.Printf("warn: resolve LARK_TAINT_ALLOWED_EMAILS failed: %v", err)
+			} else {
+				authz.RegisterAllowedOpenIDs(openIDs...)
+				log.Printf("[authz] taint allowlist: resolved %d email(s) → %d open_id(s)", len(emails)-len(unresolved), len(openIDs))
+				if len(unresolved) > 0 {
+					log.Printf("[authz] warn: could not resolve emails to open_id: %s", strings.Join(unresolved, ", "))
+				}
+			}
+		}
+	}
 
 	// Initialize K8s components
 	ctx := context.Background()
@@ -189,8 +217,13 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 
 	// Handle the incoming query
 	log.Printf("[lark] Processing query: %q", text)
-	runCtx, cancel := context.WithTimeout(ctx, 3 * time.Minute)
+	runCtx, cancel := context.WithTimeout(ctx, 10 * time.Minute)
 	defer cancel()
+
+	// Attach caller identity for permission-sensitive tools (e.g. taint_node).
+	if sender.SenderId != nil && sender.SenderId.OpenId != nil {
+		runCtx = authz.WithUserID(runCtx, *sender.SenderId.OpenId)
+	}
 
 	start := time.Now()
 	var reply string

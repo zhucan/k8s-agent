@@ -123,6 +123,44 @@ master-03 可以调度了
 mark master-03 schedulable
 ```
 
+#### 节点污点（Taint）
+
+```
+# 查看污点
+查看 master-03 的污点
+master-03 有哪些 taint
+show taints on master-03
+
+# 添加/更新污点（effect 必填：NoSchedule / PreferNoSchedule / NoExecute）
+给 master-03 打上 nvidia.com/gpu=4090:NoSchedule 污点
+在 master-03 加一个 cloud.deeproute.cn/team=simulation:NoSchedule 的 taint
+taint master-03 nvidia.com/gpu=4090:NoSchedule
+
+# 移除污点
+去掉 master-03 的 nvidia.com/gpu 污点
+移除 master-03 上 cloud.deeproute.cn/team 这个 taint
+untaint master-03 nvidia.com/gpu
+```
+
+**输出示例：**
+```
+✅ added taint on node master-03: nvidia.com/gpu=4090:NoSchedule
+```
+
+**说明：**
+- `effect` 是必填项，未指定时系统会追问，默认建议 `NoSchedule`
+- 同一 `key + effect` 存在时会覆盖 `value`
+- 移除时不传 `effect` 表示删除该 key 下所有 effect 的污点
+
+**权限与限制：**
+- 🚫 **master / control-plane 节点受保护**，不允许打/去污点（只允许 `list_node_taints` 查看）
+- 🔒 只有加入白名单的飞书用户可以执行 `taint_node` / `untaint_node`
+- 白名单可用两种方式配置（可同时使用，取并集）：
+  - `LARK_TAINT_ALLOWED_EMAILS`：逗号分隔的飞书账号邮箱（推荐，人易记）。启动时会调用飞书 contact API 解析为 open_id。
+  - `LARK_TAINT_ALLOWED_OPENIDS`：逗号分隔的 open_id 列表（`ou_xxx` 格式，作为补充或降级手段）。
+- 使用邮箱模式时，需要飞书应用具备 `contact:user.base:readonly` 权限
+- 两个变量均未设置时视为放行（便于本地 CLI / 开发调试）
+
 ---
 
 ### 3. Pod 管理

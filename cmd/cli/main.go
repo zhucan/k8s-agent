@@ -223,7 +223,7 @@ func main() {
 }
 
 func runOne(c *bot.Components, q string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3 * time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Minute)
 	defer cancel()
 	start := time.Now()
 	reply, err := c.LLM.Run(ctx, q)
