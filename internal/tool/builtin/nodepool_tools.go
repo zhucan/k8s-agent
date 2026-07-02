@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -19,26 +18,21 @@ import (
 	"github.com/k8s-inspect/internal/nodes"
 )
 
-// nodePoolGVR is the group/version/resource for the drscaler NodePool CRD.
-// Path to the node list inside the CR is spec.configuration.fixedNodes.
 var nodePoolGVR = schema.GroupVersionResource{
 	Group:    "infrastructure.deeproute.ai",
 	Version:  "v1alpha1",
 	Resource: "nodepools",
 }
 
-// nodePoolFixedNodesPath is the JSON path of the fixed-node list inside a
-// NodePool CR. It is centralized here so the read and write tools stay
-// consistent.
+// nodePoolFixedNodesPath is the *write* path — the drscaler controller reads
+// this list to decide which nodes should belong to the pool.
 var nodePoolFixedNodesPath = []string{"spec", "configuration", "fixedNodes"}
 
-// nodePoolLabelKey is the label the drscaler controller writes onto each node
-// to mark its *effective* pool assignment. This label is the source of truth
-// for "which pool is this node in" — the fixedNodes list on the NodePool CR
-// is the *write* path, but the label is what the controller has actually
-// reconciled onto the node. Read tools and preflight checks should compare
-// against this label, not scan fixedNodes.
-const nodePoolLabelKey = "drscaler.deeproute.ai/nodepool"
+// nodePoolOwnedNodesPath is the source of truth for current pool membership —
+// the drscaler controller populates status.ownedNodes with the nodes that
+// actually belong to this pool right now. All membership checks read this,
+// never fixedNodes and never the node's drscaler.deeproute.ai/nodepool label.
+var nodePoolOwnedNodesPath = []string{"status", "ownedNodes"}
 
 func newDynamicClient(rc *rest.Config) (dynamic.Interface, error) {
 	if rc == nil {
@@ -48,7 +42,7 @@ func newDynamicClient(rc *rest.Config) (dynamic.Interface, error) {
 }
 
 // getFixedNodes extracts spec.configuration.fixedNodes from an unstructured
-// NodePool, returning a plain []string. Missing / empty is not an error.
+// NodePool. Only used on the write path.
 func getFixedNodes(np *unstructured.Unstructured) ([]string, error) {
 	raw, found, err := unstructured.NestedStringSlice(np.Object, nodePoolFixedNodesPath...)
 	if err != nil {
@@ -60,10 +54,21 @@ func getFixedNodes(np *unstructured.Unstructured) ([]string, error) {
 	return raw, nil
 }
 
+// getOwnedNodes extracts status.ownedNodes from an unstructured NodePool.
+// This is the authoritative "who belongs to this pool right now" list.
+func getOwnedNodes(np *unstructured.Unstructured) ([]string, error) {
+	raw, found, err := unstructured.NestedStringSlice(np.Object, nodePoolOwnedNodesPath...)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", nodePoolOwnedNodesPath, err)
+	}
+	if !found {
+		return nil, nil
+	}
+	return raw, nil
+}
+
 // fetchNodeAndCheck loads the K8s Node object and runs the shared mutation
-// permission checks (allowlist + master protection). Callers reuse the
-// returned Node to also read the drscaler.deeproute.ai/nodepool label without
-// a second API call.
+// permission checks (allowlist + master protection).
 func fetchNodeAndCheck(ctx context.Context, cs *kubernetes.Clientset, nodeName string) (*corev1.Node, error) {
 	node, err := cs.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
@@ -75,35 +80,31 @@ func fetchNodeAndCheck(ctx context.Context, cs *kubernetes.Clientset, nodeName s
 	return node, nil
 }
 
-// resolveEffectivePool returns the pool the node effectively belongs to, based
-// on the drscaler.deeproute.ai/nodepool label — but only when that label names
-// a NodePool CR that actually exists. A stale label (pointing at a deleted or
-// never-existed pool) is treated as "no assignment", which lets the tool
-// proceed with add/move without a spurious "already in X" error.
-//
-// knownPools are pool names the caller has already fetched; if the label
-// matches one of those it is trusted without an extra API call.
-func resolveEffectivePool(ctx context.Context, dc dynamic.Interface, node *corev1.Node, knownPools ...string) (string, error) {
-	labelValue := node.Labels[nodePoolLabelKey]
-	if labelValue == "" {
-		return "", nil
+// resolveEffectivePool scans every NodePool's status.ownedNodes list and
+// returns the pool that currently owns nodeName. Returns "" if no pool owns
+// it. Uses a single List call.
+func resolveEffectivePool(ctx context.Context, dc dynamic.Interface, nodeName string) (string, error) {
+	list, err := dc.Resource(nodePoolGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("list nodepools: %w", err)
 	}
-	for _, known := range knownPools {
-		if labelValue == known {
-			return labelValue, nil
+	for i := range list.Items {
+		np := &list.Items[i]
+		owned, err := getOwnedNodes(np)
+		if err != nil {
+			return "", fmt.Errorf("pool %s: %w", np.GetName(), err)
+		}
+		for _, n := range owned {
+			if n == nodeName {
+				return np.GetName(), nil
+			}
 		}
 	}
-	if _, err := dc.Resource(nodePoolGVR).Get(ctx, labelValue, metav1.GetOptions{}); err != nil {
-		if apierrors.IsNotFound(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("verify current pool %q from node label: %w", labelValue, err)
-	}
-	return labelValue, nil
+	return "", nil
 }
 
 // ListNodePools lists all NodePool CRs in the current cluster with a summary
-// of each pool's fixed-node count and a short preview.
+// of each pool's status.ownedNodes count and a short preview.
 type ListNodePools struct {
 	RestConfig *rest.Config
 }
@@ -111,7 +112,7 @@ type ListNodePools struct {
 func (t *ListNodePools) Name() string { return "list_nodepools" }
 
 func (t *ListNodePools) Description() string {
-	return "List all NodePool CRs (infrastructure.deeproute.ai/v1alpha1). Shows each pool's name, fixed-node count, and a short preview of the first few nodes. NodePools drive node label/taint reconciliation, so moving nodes between pools is the canonical way to change a node's team/pool assignment. Read-only."
+	return "List all NodePool CRs (infrastructure.deeproute.ai/v1alpha1). Shows each pool's name, current member count (from status.ownedNodes — the drscaler controller's authoritative view of who's in the pool), and a short preview. Read-only."
 }
 
 func (t *ListNodePools) InputSchema() map[string]any {
@@ -144,46 +145,40 @@ func (t *ListNodePools) Execute(ctx context.Context, _ map[string]any) (string, 
 	pools := make([]poolSummary, 0, len(list.Items))
 	for i := range list.Items {
 		np := &list.Items[i]
-		nodes, err := getFixedNodes(np)
+		owned, err := getOwnedNodes(np)
 		if err != nil {
 			return "", fmt.Errorf("pool %s: %w", np.GetName(), err)
 		}
-		preview := nodes
+		preview := owned
 		if len(preview) > 5 {
-			preview = append([]string(nil), nodes[:5]...)
-			preview = append(preview, fmt.Sprintf("... (+%d more)", len(nodes)-5))
+			preview = append([]string(nil), owned[:5]...)
+			preview = append(preview, fmt.Sprintf("... (+%d more)", len(owned)-5))
 		}
 		pools = append(pools, poolSummary{
 			Name:      np.GetName(),
-			NodeCount: len(nodes),
+			NodeCount: len(owned),
 			Preview:   preview,
 		})
 	}
 
 	out := struct {
-		Cluster string        `json:"cluster,omitempty"`
-		Total   int           `json:"total"`
-		Pools   []poolSummary `json:"pools"`
+		Cluster          string        `json:"cluster,omitempty"`
+		MembershipSource string        `json:"membership_source"`
+		Total            int           `json:"total"`
+		Pools            []poolSummary `json:"pools"`
 	}{
-		Cluster: authz.ClusterNameFrom(ctx),
-		Total:   len(pools),
-		Pools:   pools,
+		Cluster:          authz.ClusterNameFrom(ctx),
+		MembershipSource: "NodePool.status.ownedNodes",
+		Total:            len(pools),
+		Pools:            pools,
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return string(b), nil
 }
 
-// ListPoolMembers is the label-authoritative "which nodes are in which pool"
-// view. It first lists all NodePool CRs, then for each pool queries the K8s
-// API with a labelSelector on drscaler.deeproute.ai/nodepool=<pool> to find
-// the nodes actually carrying that label. It also surfaces nodes whose label
-// points at a pool that no longer exists (stale labels) and nodes that carry
-// no drscaler.deeproute.ai/nodepool label at all.
-//
-// This is the tool the LLM should reach for whenever the user asks "which
-// nodes are in pool X" / "who's in mlp-4090" / "list the members of ..." —
-// it never consults NodePool.spec.configuration.fixedNodes, so it cannot
-// drift or produce a "fixedNodes vs label" comparison.
+// ListPoolMembers returns pool→node mappings sourced from each NodePool's
+// status.ownedNodes. It does not read fixedNodes and does not consult node
+// labels; those are byproducts of reconciliation and are not the truth.
 type ListPoolMembers struct {
 	RestConfig *rest.Config
 	CS         *kubernetes.Clientset
@@ -192,7 +187,7 @@ type ListPoolMembers struct {
 func (t *ListPoolMembers) Name() string { return "list_pool_members" }
 
 func (t *ListPoolMembers) Description() string {
-	return "List actual node members of each NodePool, grouped by pool. Membership is determined by the drscaler.deeproute.ai/nodepool label on each node (the only source of truth) — this tool does NOT read NodePool.spec.configuration.fixedNodes. Also reports nodes with stale labels (pointing at a pool that no longer exists) and unassigned nodes (no drscaler.deeproute.ai/nodepool label). Use this whenever the user asks who is in a pool, which pool a node belongs to, or wants a pool→nodes mapping. Set pool=\"unassigned\" (or \"none\") to return only nodes with no drscaler.deeproute.ai/nodepool label."
+	return "List the current node members of each NodePool, grouped by pool. Membership is read from NodePool.status.ownedNodes (the drscaler controller's authoritative view). Also reports nodes that no pool owns. Use this whenever the user asks who is in a pool, which pool a node belongs to, or wants a pool→nodes mapping. Set pool=\"unassigned\" (or \"none\") to return only nodes that no pool owns."
 }
 
 func (t *ListPoolMembers) InputSchema() map[string]any {
@@ -201,7 +196,7 @@ func (t *ListPoolMembers) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"pool": map[string]any{
 				"type":        "string",
-				"description": "Optional. NodePool CR name to restrict results to (e.g. 'mlp-4090'). Special values: \"unassigned\" or \"none\" returns only nodes with no drscaler.deeproute.ai/nodepool label. Omit to get every pool plus stale/unassigned nodes.",
+				"description": "Optional. NodePool CR name to restrict results to (e.g. 'mlp-4090'). Special values: \"unassigned\" or \"none\" returns only nodes that no NodePool currently owns. Omit to get every pool plus unassigned nodes.",
 			},
 		},
 	}
@@ -210,6 +205,12 @@ func (t *ListPoolMembers) InputSchema() map[string]any {
 func (t *ListPoolMembers) Execute(ctx context.Context, input map[string]any) (string, error) {
 	poolFilter, _ := input["pool"].(string)
 	poolFilter = strings.TrimSpace(poolFilter)
+
+	unassignedRequested := false
+	switch strings.ToLower(poolFilter) {
+	case "unassigned", "none", "no-pool", "no_pool":
+		unassignedRequested = true
+	}
 
 	dc, err := newDynamicClient(t.RestConfig)
 	if err != nil {
@@ -221,53 +222,40 @@ func (t *ListPoolMembers) Execute(ctx context.Context, input map[string]any) (st
 		return "", fmt.Errorf("list nodepools: %w", err)
 	}
 
-	existingPools := make(map[string]bool, len(poolList.Items))
-	poolNames := make([]string, 0, len(poolList.Items))
-	unassignedRequested := false
-	switch strings.ToLower(poolFilter) {
-	case "unassigned", "none", "no-pool", "no_pool":
-		unassignedRequested = true
-	}
-	for i := range poolList.Items {
-		name := poolList.Items[i].GetName()
-		existingPools[name] = true
-		if !unassignedRequested && (poolFilter == "" || poolFilter == name) {
-			poolNames = append(poolNames, name)
-		}
-	}
-
-	if poolFilter != "" && !unassignedRequested && !existingPools[poolFilter] {
-		return "", fmt.Errorf("nodepool %q not found in cluster %s (use pool=\"unassigned\" to list nodes with no drscaler.deeproute.ai/nodepool label)", poolFilter, authz.ClusterNameFrom(ctx))
-	}
-
 	type poolMembers struct {
 		Name      string   `json:"pool"`
 		NodeCount int      `json:"node_count"`
 		Nodes     []string `json:"nodes"`
 	}
-	pools := make([]poolMembers, 0, len(poolNames))
-	for _, name := range poolNames {
-		sel := fmt.Sprintf("%s=%s", nodePoolLabelKey, name)
-		nl, err := t.CS.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: sel})
+	pools := make([]poolMembers, 0, len(poolList.Items))
+	ownedByAny := make(map[string]bool)
+	poolExists := false
+	for i := range poolList.Items {
+		np := &poolList.Items[i]
+		name := np.GetName()
+		if name == poolFilter {
+			poolExists = true
+		}
+		owned, err := getOwnedNodes(np)
 		if err != nil {
-			return "", fmt.Errorf("list nodes with %s: %w", sel, err)
+			return "", fmt.Errorf("pool %s: %w", name, err)
 		}
-		names := make([]string, 0, len(nl.Items))
-		for i := range nl.Items {
-			names = append(names, nl.Items[i].Name)
+		for _, n := range owned {
+			ownedByAny[n] = true
 		}
-		pools = append(pools, poolMembers{
-			Name:      name,
-			NodeCount: len(names),
-			Nodes:     names,
-		})
+		if !unassignedRequested && (poolFilter == "" || poolFilter == name) {
+			pools = append(pools, poolMembers{
+				Name:      name,
+				NodeCount: len(owned),
+				Nodes:     owned,
+			})
+		}
 	}
 
-	// Surface nodes with no drscaler.deeproute.ai/nodepool label and nodes whose
-	// label points at a non-existent pool. We compute these when the caller
-	// asks for "all pools" (poolFilter == "") or specifically requests the
-	// unassigned view.
-	var stale []map[string]string
+	if poolFilter != "" && !unassignedRequested && !poolExists {
+		return "", fmt.Errorf("nodepool %q not found in cluster %s (use pool=\"unassigned\" to list nodes that no pool owns)", poolFilter, authz.ClusterNameFrom(ctx))
+	}
+
 	var unassigned []string
 	if poolFilter == "" || unassignedRequested {
 		allNodes, err := t.CS.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
@@ -276,47 +264,32 @@ func (t *ListPoolMembers) Execute(ctx context.Context, input map[string]any) (st
 		}
 		for i := range allNodes.Items {
 			n := &allNodes.Items[i]
-			labelValue := n.Labels[nodePoolLabelKey]
-			if labelValue == "" {
+			if !ownedByAny[n.Name] {
 				unassigned = append(unassigned, n.Name)
-				continue
-			}
-			if !existingPools[labelValue] {
-				stale = append(stale, map[string]string{
-					"node":            n.Name,
-					"label_points_at": labelValue,
-				})
 			}
 		}
 	}
 
 	out := struct {
-		Cluster       string              `json:"cluster,omitempty"`
-		LabelKey      string              `json:"membership_source_label"`
-		Pools         []poolMembers       `json:"pools"`
-		StaleLabels   []map[string]string `json:"stale_labels,omitempty"`
-		Unassigned    []string            `json:"unassigned_nodes,omitempty"`
-		UnassignedNum int                 `json:"unassigned_count,omitempty"`
+		Cluster          string        `json:"cluster,omitempty"`
+		MembershipSource string        `json:"membership_source"`
+		Pools            []poolMembers `json:"pools"`
+		Unassigned       []string      `json:"unassigned_nodes,omitempty"`
+		UnassignedNum    int           `json:"unassigned_count,omitempty"`
 	}{
-		Cluster:       authz.ClusterNameFrom(ctx),
-		LabelKey:      nodePoolLabelKey,
-		Pools:         pools,
-		StaleLabels:   stale,
-		Unassigned:    unassigned,
-		UnassignedNum: len(unassigned),
+		Cluster:          authz.ClusterNameFrom(ctx),
+		MembershipSource: "NodePool.status.ownedNodes",
+		Pools:            pools,
+		Unassigned:       unassigned,
+		UnassignedNum:    len(unassigned),
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return string(b), nil
 }
 
-// MoveNodeBetweenPools atomically removes a node from one NodePool and adds it
-// to another. Both updates happen in the same Execute call so the LLM does not
-// have to orchestrate two tool calls (and cannot leave the node in an
-// inconsistent "in neither pool" state due to LLM error).
-//
-// The two Update calls are still separate API operations — if the second one
-// fails, the first has already committed. The returned error surfaces this
-// explicitly so the caller knows the node currently belongs to no pool.
+// MoveNodeBetweenPools moves a node from one NodePool to another by rewriting
+// both pools' spec.configuration.fixedNodes. Membership decisions come from
+// scanning every pool's status.ownedNodes — never fixedNodes, never node labels.
 type MoveNodeBetweenPools struct {
 	RestConfig *rest.Config
 	CS         *kubernetes.Clientset
@@ -326,7 +299,7 @@ type MoveNodeBetweenPools struct {
 func (t *MoveNodeBetweenPools) Name() string { return "move_node_between_pools" }
 
 func (t *MoveNodeBetweenPools) Description() string {
-	return "Move a node from one NodePool to another in a single operation. Equivalent to remove_node_from_pool(from) then add_node_to_pool(to), but does both in one tool call. This is the canonical way to change a node's team/pool assignment — the drscaler controller will then reconcile labels and taints on the node to match the new pool (no need to modify labels or taints directly). The from_pool argument is validated against the node's drscaler.deeproute.ai/nodepool label (source of truth for current membership) before any writes. Blocked on master/control-plane nodes; requires the caller to be on the taint/label mutation allowlist."
+	return "Move a node from one NodePool to another in a single operation. Equivalent to remove_node_from_pool(from) then add_node_to_pool(to), but does both in one tool call. This is the canonical way to change a node's team/pool assignment — the drscaler controller will then reconcile labels and taints on the node to match the new pool. The from_pool argument is validated against NodePool.status.ownedNodes (source of truth for current membership) before any writes. Blocked on master/control-plane nodes; requires the caller to be on the taint/label mutation allowlist."
 }
 
 func (t *MoveNodeBetweenPools) InputSchema() map[string]any {
@@ -339,7 +312,7 @@ func (t *MoveNodeBetweenPools) InputSchema() map[string]any {
 			},
 			"from_pool": map[string]any{
 				"type":        "string",
-				"description": "Source NodePool CR name (e.g. 'simulation-4090'). Node must currently be in this pool.",
+				"description": "Source NodePool CR name (e.g. 'simulation-4090'). Node must currently be in this pool (per status.ownedNodes).",
 			},
 			"to_pool": map[string]any{
 				"type":        "string",
@@ -365,8 +338,7 @@ func (t *MoveNodeBetweenPools) Execute(ctx context.Context, input map[string]any
 	if err != nil {
 		return "", err
 	}
-	node, err := fetchNodeAndCheck(ctx, t.CS, nodeName)
-	if err != nil {
+	if _, err := fetchNodeAndCheck(ctx, t.CS, nodeName); err != nil {
 		return "", err
 	}
 
@@ -375,8 +347,7 @@ func (t *MoveNodeBetweenPools) Execute(ctx context.Context, input map[string]any
 		return "", err
 	}
 
-	// Fetch both pools up front — this both validates their existence and
-	// gives us the fixedNodes lists we'll mutate below.
+	// Fetch both pools up front to validate existence and grab fixedNodes.
 	fromNP, err := dc.Resource(nodePoolGVR).Get(ctx, from, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("get from_pool %s: %w", from, err)
@@ -394,27 +365,19 @@ func (t *MoveNodeBetweenPools) Execute(ctx context.Context, input map[string]any
 		return "", err
 	}
 
-	// Effective pool assignment is determined by the drscaler.deeproute.ai/nodepool
-	// label, but only when it points at a NodePool that actually exists. A stale
-	// label (pointing at a deleted or renamed pool) is treated as "no assignment"
-	// so we don't block a legitimate move. We do NOT consult fixedNodes for this
-	// check — the label is authoritative.
-	effectivePool, err := resolveEffectivePool(ctx, dc, node, from, to)
+	// Sole membership check: scan every pool's status.ownedNodes.
+	effectivePool, err := resolveEffectivePool(ctx, dc, nodeName)
 	if err != nil {
 		return "", err
 	}
 	if effectivePool == to {
-		return fmt.Sprintf("[cluster=%s] node %s is already in NodePool %s (per %s label) — nothing to move", clusterTag(ctx), nodeName, to, nodePoolLabelKey), nil
+		return fmt.Sprintf("[cluster=%s] node %s is already in NodePool %s (per status.ownedNodes) — nothing to move", clusterTag(ctx), nodeName, to), nil
 	}
 	if effectivePool != "" && effectivePool != from {
-		return "", fmt.Errorf("[cluster=%s] node %s is currently in NodePool %q (per %s label), not %s — check the actual source with list_node_labels before retrying", clusterTag(ctx), nodeName, effectivePool, nodePoolLabelKey, from)
+		return "", fmt.Errorf("[cluster=%s] node %s is currently in NodePool %q (per status.ownedNodes), not %s — check list_pool_members before retrying", clusterTag(ctx), nodeName, effectivePool, from)
 	}
 
-	// Build the new fixedNodes lists and write both pools unconditionally.
-	// Whether or not the node currently appears in either list is NOT a decision
-	// input — the label already told us the node belongs in `from` and not in
-	// `to`, so we strip it from `from` (a no-op if absent) and append it to `to`
-	// (a no-op if the pool already contained it after dedup).
+	// fixedNodes rewrites — ownedNodes already told us which direction to go.
 	fromKept := make([]string, 0, len(fromFixed))
 	for _, n := range fromFixed {
 		if n == nodeName {
@@ -444,12 +407,11 @@ func (t *MoveNodeBetweenPools) Execute(ctx context.Context, input map[string]any
 		return "", fmt.Errorf("[cluster=%s] update to_pool %s: %w — node %s has been removed from %s but NOT added to %s. Recover with: add_node_to_pool(pool=%s, node=%s)", clusterTag(ctx), to, err, nodeName, from, to, to, nodeName)
 	}
 
-	return fmt.Sprintf("✅ [cluster=%s] moved node %s from NodePool %s to %s. Controller will reconcile labels/taints in a few seconds — verify with list_node_labels + list_node_taints.", clusterTag(ctx), nodeName, from, to), nil
+	return fmt.Sprintf("✅ [cluster=%s] moved node %s from NodePool %s to %s. Controller will reconcile labels/taints and status.ownedNodes in a few seconds — verify with list_pool_members.", clusterTag(ctx), nodeName, from, to), nil
 }
 
 // AddNodeToPool appends a node to a NodePool's spec.configuration.fixedNodes.
-// Refuses if the node is already assigned to any pool (caller should remove
-// it first or use a dedicated move operation).
+// Refuses if some other pool currently owns the node (per status.ownedNodes).
 type AddNodeToPool struct {
 	RestConfig *rest.Config
 	CS         *kubernetes.Clientset
@@ -459,7 +421,7 @@ type AddNodeToPool struct {
 func (t *AddNodeToPool) Name() string { return "add_node_to_pool" }
 
 func (t *AddNodeToPool) Description() string {
-	return "Add a node to a NodePool's spec.configuration.fixedNodes list. The drscaler controller will then reconcile the node's labels and taints to match the pool. Current pool membership is determined by the node's drscaler.deeproute.ai/nodepool label — the tool refuses if that label points at a different pool (use move_node_between_pools instead, or first remove_node_from_pool). Blocked on master/control-plane nodes; requires the caller to be on the taint/label mutation allowlist."
+	return "Add a node to a NodePool's spec.configuration.fixedNodes list. The drscaler controller will then reconcile the node's labels and taints to match the pool. Current pool membership is determined by scanning NodePool.status.ownedNodes across all pools — the tool refuses if another pool currently owns the node (use move_node_between_pools instead, or first remove_node_from_pool). Blocked on master/control-plane nodes; requires the caller to be on the taint/label mutation allowlist."
 }
 
 func (t *AddNodeToPool) InputSchema() map[string]any {
@@ -491,8 +453,7 @@ func (t *AddNodeToPool) Execute(ctx context.Context, input map[string]any) (stri
 		return "", err
 	}
 
-	node, err := fetchNodeAndCheck(ctx, t.CS, nodeName)
-	if err != nil {
+	if _, err := fetchNodeAndCheck(ctx, t.CS, nodeName); err != nil {
 		return "", err
 	}
 
@@ -501,27 +462,21 @@ func (t *AddNodeToPool) Execute(ctx context.Context, input map[string]any) (stri
 		return "", err
 	}
 
-	// Fetch the target pool first — this verifies it exists before we do
-	// anything else, and gives us the current fixedNodes list to mutate.
 	np, err := dc.Resource(nodePoolGVR).Get(ctx, pool, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("get nodepool %s: %w", pool, err)
 	}
 
-	// Effective pool assignment is determined by the drscaler.deeproute.ai/nodepool
-	// label, but only when it points at a NodePool that actually exists. A stale
-	// label (pointing at a deleted or renamed pool) is treated as "no assignment"
-	// so we don't block a legitimate add. fixedNodes is NEVER consulted for the
-	// membership decision — the label is the sole source of truth.
-	effectivePool, err := resolveEffectivePool(ctx, dc, node, pool)
+	// Sole membership check: scan every pool's status.ownedNodes.
+	effectivePool, err := resolveEffectivePool(ctx, dc, nodeName)
 	if err != nil {
 		return "", err
 	}
 	if effectivePool == pool {
-		return fmt.Sprintf("[cluster=%s] node %s already in NodePool %s (per %s label) — no change", clusterTag(ctx), nodeName, pool, nodePoolLabelKey), nil
+		return fmt.Sprintf("[cluster=%s] node %s already in NodePool %s (per status.ownedNodes) — no change", clusterTag(ctx), nodeName, pool), nil
 	}
 	if effectivePool != "" {
-		return "", fmt.Errorf("[cluster=%s] node %s is currently in NodePool %q (per %s label) — remove it from that pool first (or use move_node_between_pools)", clusterTag(ctx), nodeName, effectivePool, nodePoolLabelKey)
+		return "", fmt.Errorf("[cluster=%s] node %s is currently in NodePool %q (per status.ownedNodes) — remove it from that pool first (or use move_node_between_pools)", clusterTag(ctx), nodeName, effectivePool)
 	}
 
 	fixed, err := getFixedNodes(np)
@@ -529,33 +484,24 @@ func (t *AddNodeToPool) Execute(ctx context.Context, input map[string]any) (stri
 		return "", err
 	}
 	newFixed := append([]string(nil), fixed...)
-	newFixed = append(newFixed, nodeName)
-	if err := unstructured.SetNestedStringSlice(np.Object, newFixed, nodePoolFixedNodesPath...); err != nil {
-		return "", fmt.Errorf("set fixedNodes: %w", err)
-	}
-
-	result, err := dc.Resource(nodePoolGVR).Update(ctx, np, metav1.UpdateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("update nodepool %s: %w", pool, err)
-	}
-
-	after, err := getFixedNodes(result)
-	if err != nil {
-		return "", err
-	}
-	present := false
-	for _, n := range after {
+	alreadyInFixed := false
+	for _, n := range newFixed {
 		if n == nodeName {
-			present = true
+			alreadyInFixed = true
 			break
 		}
 	}
-	if !present {
-		afterJSON, _ := json.Marshal(after)
-		return "", fmt.Errorf("[cluster=%s] update on NodePool %s appeared to succeed but node %s is NOT present in fixedNodes returned by the API server — a mutating admission webhook or a controller likely reverted it. Actual fixedNodes: %s", clusterTag(ctx), pool, nodeName, string(afterJSON))
+	if !alreadyInFixed {
+		newFixed = append(newFixed, nodeName)
+	}
+	if err := unstructured.SetNestedStringSlice(np.Object, newFixed, nodePoolFixedNodesPath...); err != nil {
+		return "", fmt.Errorf("set fixedNodes: %w", err)
+	}
+	if _, err := dc.Resource(nodePoolGVR).Update(ctx, np, metav1.UpdateOptions{}); err != nil {
+		return "", fmt.Errorf("update nodepool %s: %w", pool, err)
 	}
 
-	return fmt.Sprintf("✅ [cluster=%s] added node %s to NodePool %s (fixedNodes now has %d node(s), verified in API response). Controller will reconcile labels/taints in a few seconds.", clusterTag(ctx), nodeName, pool, len(after)), nil
+	return fmt.Sprintf("✅ [cluster=%s] added node %s to NodePool %s fixedNodes. Controller will reconcile labels/taints and status.ownedNodes in a few seconds — verify with list_pool_members.", clusterTag(ctx), nodeName, pool), nil
 }
 
 // RemoveNodeFromPool removes a node from a NodePool's spec.configuration.fixedNodes.
@@ -568,7 +514,7 @@ type RemoveNodeFromPool struct {
 func (t *RemoveNodeFromPool) Name() string { return "remove_node_from_pool" }
 
 func (t *RemoveNodeFromPool) Description() string {
-	return "Remove a node from a NodePool's spec.configuration.fixedNodes list. After removal, the drscaler controller will stop reconciling that pool's labels/taints onto the node (existing labels/taints may or may not be cleared depending on controller behavior — verify with list_node_labels / list_node_taints). Blocked on master/control-plane nodes; requires the caller to be on the taint/label mutation allowlist."
+	return "Remove a node from a NodePool's spec.configuration.fixedNodes list. After removal, the drscaler controller will stop reconciling that pool's labels/taints onto the node and drop it from status.ownedNodes. Blocked on master/control-plane nodes; requires the caller to be on the taint/label mutation allowlist."
 }
 
 func (t *RemoveNodeFromPool) InputSchema() map[string]any {
@@ -626,35 +572,20 @@ func (t *RemoveNodeFromPool) Execute(ctx context.Context, input map[string]any) 
 		kept = append(kept, n)
 	}
 	if !found {
-		return fmt.Sprintf("[cluster=%s] node %s not in NodePool %s — nothing removed", clusterTag(ctx), nodeName, pool), nil
+		return fmt.Sprintf("[cluster=%s] node %s not in NodePool %s fixedNodes — nothing removed", clusterTag(ctx), nodeName, pool), nil
 	}
 	if err := unstructured.SetNestedStringSlice(np.Object, kept, nodePoolFixedNodesPath...); err != nil {
 		return "", fmt.Errorf("set fixedNodes: %w", err)
 	}
-
-	result, err := dc.Resource(nodePoolGVR).Update(ctx, np, metav1.UpdateOptions{})
-	if err != nil {
+	if _, err := dc.Resource(nodePoolGVR).Update(ctx, np, metav1.UpdateOptions{}); err != nil {
 		return "", fmt.Errorf("update nodepool %s: %w", pool, err)
 	}
 
-	after, err := getFixedNodes(result)
-	if err != nil {
-		return "", err
-	}
-	for _, n := range after {
-		if n == nodeName {
-			afterJSON, _ := json.Marshal(after)
-			return "", fmt.Errorf("[cluster=%s] remove on NodePool %s appeared to succeed but node %s is still present in fixedNodes returned by the API server — a mutating admission webhook or a controller likely reverted it. Actual fixedNodes: %s", clusterTag(ctx), pool, nodeName, string(afterJSON))
-		}
-	}
-
-	return fmt.Sprintf("✅ [cluster=%s] removed node %s from NodePool %s (fixedNodes now has %d node(s), verified in API response).", clusterTag(ctx), nodeName, pool, len(after)), nil
+	return fmt.Sprintf("✅ [cluster=%s] removed node %s from NodePool %s fixedNodes. Controller will drop it from status.ownedNodes in a few seconds.", clusterTag(ctx), nodeName, pool), nil
 }
 
 // resolveNodeName turns a user-supplied identifier (IP / hostname / node name)
 // into the canonical K8s node name used inside NodePool.spec.configuration.fixedNodes.
-// If reg is nil (single-cluster mode with no registry wired in), the raw string
-// is returned unchanged.
 func resolveNodeName(reg *nodes.Registry, raw string) (string, error) {
 	if reg == nil {
 		if strings.TrimSpace(raw) == "" {
@@ -669,7 +600,8 @@ func resolveNodeName(reg *nodes.Registry, raw string) (string, error) {
 	return n.Name, nil
 }
 
-// GetNodePool returns a single NodePool's fixedNodes list in full.
+// GetNodePool returns a NodePool's fixedNodes (write path) and
+// status.ownedNodes (current members).
 type GetNodePool struct {
 	RestConfig *rest.Config
 	Nodes      *nodes.Registry
@@ -678,7 +610,7 @@ type GetNodePool struct {
 func (t *GetNodePool) Name() string { return "get_nodepool" }
 
 func (t *GetNodePool) Description() string {
-	return "Get a NodePool's full fixedNodes list (infrastructure.deeproute.ai/v1alpha1). Use this to see all nodes currently assigned to a pool. Read-only."
+	return "Get a NodePool's status.ownedNodes (authoritative current members) and spec.configuration.fixedNodes (controller input). Read-only. When answering 'which nodes are in this pool', use ownedNodes — fixedNodes is what the controller has been instructed to reconcile, not necessarily current membership."
 }
 
 func (t *GetNodePool) InputSchema() map[string]any {
@@ -707,20 +639,26 @@ func (t *GetNodePool) Execute(ctx context.Context, input map[string]any) (string
 	if err != nil {
 		return "", fmt.Errorf("get nodepool %s: %w", name, err)
 	}
-	nodes, err := getFixedNodes(np)
+	fixed, err := getFixedNodes(np)
+	if err != nil {
+		return "", err
+	}
+	owned, err := getOwnedNodes(np)
 	if err != nil {
 		return "", err
 	}
 	out := struct {
 		Cluster    string   `json:"cluster,omitempty"`
 		Name       string   `json:"name"`
-		NodeCount  int      `json:"node_count"`
-		FixedNodes []string `json:"fixed_nodes"`
+		OwnedCount int      `json:"owned_count"`
+		OwnedNodes []string `json:"owned_nodes"`
+		FixedNodes []string `json:"fixed_nodes,omitempty"`
 	}{
 		Cluster:    authz.ClusterNameFrom(ctx),
 		Name:       np.GetName(),
-		NodeCount:  len(nodes),
-		FixedNodes: nodes,
+		OwnedCount: len(owned),
+		OwnedNodes: owned,
+		FixedNodes: fixed,
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return string(b), nil

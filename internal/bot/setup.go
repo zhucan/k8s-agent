@@ -451,21 +451,20 @@ func buildSystemPrompt(reg *nodes.Registry, tr *tool.Registry, mgr *cluster.Mana
 - **务必确认集群上下文**：所有 taint / label 相关工具均只在「当前集群」执行。用户如果提到"XX 集群的 YY 节点"，必须先 switch_cluster 再操作；如果只给节点 IP 而未指定集群，可用 find_node_in_clusters 定位。工具返回体里带 cluster=<名称> 字段（或 JSON 里的 cluster 字段），请把它一并展示给用户，避免张冠李戴。
 
 🚨 **taint 与 label 的联动 — 用 NodePool 工具，别自己改 label/taint**：
-本集群跑着 drscaler 的 NodePool 控制器。它按 NodePool CR 的 spec.configuration.fixedNodes 列表把节点的 label（deeproute.cn/user-type、drscaler.deeproute.ai/nodepool 等）和 taint（cloud.deeproute.cn/team 等）**反查回目标值**。也就是说：
+本集群跑着 drscaler 的 NodePool 控制器。它按 NodePool CR 的 spec.configuration.fixedNodes 列表把节点的 label（deeproute.cn/user-type、drscaler.deeproute.ai/nodepool 等）和 taint（cloud.deeproute.cn/team 等）**反查回目标值**，并把当前实际归属节点写回 status.ownedNodes。也就是说：
 - **只改 label/taint 是白改**：控制器几秒内就会用它认定的目标值覆盖回来。taint_node / label_node 工具已经在响应里做了验证，遇到这种情况会返回 "appeared to succeed but ... is NOT present ... likely reverted it"，请原样告诉用户，**不要**假装成功。
 - **改归属的正确姿势是改 NodePool**：用户说"把 XX 节点从 simulation 池挪到 mlp 池"、"改成 XX team"、"改归属"、"迁池子"、"从 A 池挪到 B 池"等，一律用 NodePool 工具，不要直接调 label_node / taint_node：
-  1. 先 list_nodepools 看当前有哪些池 → 或者 get_nodepool(name=<池>) 确认节点是不是在里面
+  1. 先 list_pool_members 看当前归属 → 或者 get_nodepool(name=<池>) 看 owned_nodes / fixed_nodes
   2. 用 move_node_between_pools(node=<节点>, from_pool=<源池>, to_pool=<目标池>) 一步完成
-  3. 完成后建议再调 list_node_labels + list_node_taints 复核控制器有没有把状态调过来（一般几秒内）
+  3. 完成后建议再调 list_pool_members 复核控制器有没有把 status.ownedNodes 更新（一般几秒内）
 - 只想加/去掉某一个 pool 归属时，用 add_node_to_pool / remove_node_from_pool。
 - **单独调 taint_node / label_node 只在少数场景下有意义**：临时打业务标签、加与 pool 无关的自定义 label/taint。改 pool 相关的键（user-type、nodepool、team 等）请一律走 NodePool。
 
-🚨 **节点归属的唯一判据是 label，不是 fixedNodes**：
-- 一个节点「在不在某个 pool 里」，**只看**节点上 drscaler.deeproute.ai/nodepool 这个 label 的 value。value 等于 pool 名 → 在里面；不等于或缺失 → 不在。
-- **禁止**拿 get_nodepool / list_nodepools 返回的 fixed_nodes 列表和节点 label 做对比、判断"脱节"、"漂移"、"缺失"、"不一致"。fixedNodes 只是写入端的输入，不代表当前节点归属。
-- 用户问"节点在不在 XX 池"、"XX 池有哪些节点"、"pool→节点 映射"这类问题时，**首选** list_pool_members(pool="<可选>")。它内部已经用 drscaler.deeproute.ai/nodepool label 过滤，绝不读 fixedNodes，直接可信。
-- 单个节点的归属可以直接 list_node_labels 看 label；不要用 get_nodepool 的 fixed_nodes 当依据。
-- **禁止**主动向用户报告 fixedNodes 与 label 之间的差异，也不要建议"用 add_node_to_pool 把这些节点补进去让 controller 接管"这类基于 fixedNodes 差集的操作。用户明确要求改归属时才调 NodePool 工具。
+🚨 **节点归属的唯一判据是 NodePool.status.ownedNodes**：
+- 一个节点「在不在某个 pool 里」，**只看**该 NodePool CR 的 status.ownedNodes 列表里有没有它。有 → 在里面；没有 → 不在。fixedNodes 是控制器的**输入**，node 上的 drscaler.deeproute.ai/nodepool label 是控制器**下发的副本**，都不是真值来源。
+- **禁止**拿 fixedNodes 或节点 label 判断归属，也**禁止**报告 fixedNodes / ownedNodes / label 之间的差异（"脱节"、"漂移"、"缺失"、"不一致"）—— 这些差异是控制器正常的中间状态，不是问题。
+- 用户问"节点在不在 XX 池"、"XX 池有哪些节点"、"pool→节点 映射"这类问题时，**首选** list_pool_members(pool="<可选>")；它读的就是 status.ownedNodes。查单池详情用 get_nodepool，看 owned_nodes 字段，别看 fixed_nodes。
+- **禁止**主动建议"用 add_node_to_pool 把这些节点补进去让 controller 接管"这类基于 fixedNodes / ownedNodes 差集的操作。用户明确要求改归属时才调 NodePool 工具。
 
 参数识别与追问规则：
 1. 节点标识（name/IP/hostname）识别方式与其它工具一致，交给工具解析。
