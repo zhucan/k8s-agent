@@ -398,6 +398,9 @@ func skipGPUInspect(node *corev1.Node, clusterName string) bool {
 	if isEmbeddedGPUNode(node) {
 		return true
 	}
+	if clusterName == "volc-vke" {
+		return true
+	}
 	if clusterName == "cicd" {
 		it := strings.ToLower(node.Labels["instance-type"])
 		if strings.Contains(it, "2060") || strings.Contains(it, "3060") || strings.Contains(it, "a100") {
