@@ -1,6 +1,8 @@
 // Package storagemon samples random .snappy files under configured directories,
 // measures per-file read latency, and fires a Feishu alert when the average
-// latency inside a sliding window crosses the configured threshold.
+// latency inside a sliding window crosses the configured threshold. Only
+// subdirectory names are cached; each sample randomly selects a fresh .snappy
+// file and evicts page cache around the read (Linux).
 package storagemon
 
 import (
@@ -22,6 +24,38 @@ import (
 
 	larkutil "github.com/k8s-inspect/internal/lark"
 )
+
+const (
+	// maxSubdirPickAttempts caps how many random subdirs we probe per sample
+	// before falling back to a full scan (sparse .snappy layout).
+	maxSubdirPickAttempts = 16
+)
+
+var errNoSnappyInDir = errors.New("no .snappy files in directory")
+
+// subdirCache caches immediate subdirectory paths under the monitor root for
+// the lifetime of the sampler. It never caches .snappy paths or file contents;
+// each sample readdir's one randomly chosen subdir and randomly picks a file
+// there. The list is refreshed only after invalidate (e.g. no .snappy found).
+type subdirCache struct {
+	subs []string
+}
+
+func (c *subdirCache) get(root string) ([]string, error) {
+	if len(c.subs) > 0 {
+		return c.subs, nil
+	}
+	subs, err := listSubdirs(root)
+	if err != nil {
+		return nil, err
+	}
+	c.subs = subs
+	return c.subs, nil
+}
+
+func (c *subdirCache) invalidate() {
+	c.subs = nil
+}
 
 // Target is one monitored directory + threshold pair.
 type Target struct {
@@ -83,10 +117,11 @@ type sample struct {
 
 func runSampler(ctx context.Context, tgt Target, cfg Config) {
 	var (
-		mu           sync.Mutex
-		samples      []sample
-		lastAlertAt  time.Time
-		inViolation  bool
+		mu          sync.Mutex
+		samples     []sample
+		lastAlertAt time.Time
+		inViolation bool
+		cache       subdirCache
 	)
 
 	ticker := time.NewTicker(cfg.SampleInterval)
@@ -98,7 +133,7 @@ func runSampler(ctx context.Context, tgt Target, cfg Config) {
 			log.Printf("[storagemon] %s: stopped", tgt.Dir)
 			return
 		case <-ticker.C:
-			s := takeSample(ctx, tgt.Dir)
+			s := takeSample(ctx, tgt.Dir, &cache)
 
 			mu.Lock()
 			samples = append(samples, s)
@@ -147,11 +182,12 @@ func runSampler(ctx context.Context, tgt Target, cfg Config) {
 }
 
 // takeSample picks a random subdirectory of dir, then a random .snappy file
-// inside it, reads the file fully, and returns the elapsed time.
-func takeSample(ctx context.Context, dir string) sample {
+// inside it, reads the file fully, and returns the elapsed time. Directory
+// listing for subdirs is cached; only os.Open+read is performed on the file.
+func takeSample(ctx context.Context, dir string, cache *subdirCache) sample {
 	s := sample{At: time.Now()}
 
-	file, err := pickRandomSnappy(dir)
+	file, err := pickRandomSnappy(dir, cache)
 	if err != nil {
 		s.Err = err
 		return s
@@ -166,14 +202,52 @@ func takeSample(ctx context.Context, dir string) sample {
 	return s
 }
 
-// pickRandomSnappy chooses a random subdirectory under root, then a random
-// .snappy file inside that subdirectory. If the first pick has no .snappy
-// files, it tries other subdirectories until one yields a match or all are
-// exhausted.
-func pickRandomSnappy(root string) (string, error) {
+// pickRandomSnappy chooses a uniformly random .snappy file under root. Each call
+// independently picks a random subdirectory and a random file inside it via a
+// fresh readdir (no snappy path cache). Up to maxSubdirPickAttempts random
+// subdirs are tried before a full scan for sparse layouts.
+func pickRandomSnappy(root string, cache *subdirCache) (string, error) {
+	file, err := pickRandomSnappyOnce(root, cache)
+	if err == nil {
+		return file, nil
+	}
+	if cache != nil {
+		cache.invalidate()
+		if file, retryErr := pickRandomSnappyOnce(root, cache); retryErr == nil {
+			return file, nil
+		}
+	}
+	return "", err
+}
+
+func pickRandomSnappyOnce(root string, cache *subdirCache) (string, error) {
+	var subs []string
+	var err error
+	if cache != nil {
+		subs, err = cache.get(root)
+	} else {
+		subs, err = listSubdirs(root)
+	}
+	if err != nil {
+		return "", err
+	}
+	if len(subs) == 0 {
+		return "", fmt.Errorf("no subdirectories under %s", root)
+	}
+
+	if file, ok := pickFromRandomSubdirs(subs, maxSubdirPickAttempts); ok {
+		return file, nil
+	}
+	if file, ok := pickFromAllSubdirs(subs); ok {
+		return file, nil
+	}
+	return "", fmt.Errorf("no .snappy files found under any subdirectory of %s", root)
+}
+
+func listSubdirs(root string) ([]string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return "", fmt.Errorf("read root %s: %w", root, err)
+		return nil, fmt.Errorf("read root %s: %w", root, err)
 	}
 	subs := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -181,51 +255,116 @@ func pickRandomSnappy(root string) (string, error) {
 			subs = append(subs, filepath.Join(root, e.Name()))
 		}
 	}
-	if len(subs) == 0 {
-		return "", fmt.Errorf("no subdirectories under %s", root)
-	}
-	shuffle(subs)
-
-	for _, sub := range subs {
-		files, err := listSnappyFiles(sub)
-		if err != nil {
-			log.Printf("[storagemon] list %s: %v", sub, err)
-			continue
-		}
-		if len(files) == 0 {
-			continue
-		}
-		return files[randIntn(len(files))], nil
-	}
-	return "", fmt.Errorf("no .snappy files found under any subdirectory of %s", root)
+	return subs, nil
 }
 
-func listSnappyFiles(dir string) ([]string, error) {
+// pickFromRandomSubdirs tries up to maxAttempts distinct random subdirectories.
+// Each try readdir's that subdir and picks one random .snappy file on the fly.
+func pickFromRandomSubdirs(subs []string, maxAttempts int) (string, bool) {
+	if maxAttempts <= 0 {
+		return "", false
+	}
+	if maxAttempts > len(subs) {
+		maxAttempts = len(subs)
+	}
+	tried := make(map[int]struct{}, maxAttempts)
+	for len(tried) < maxAttempts {
+		idx := randIntn(len(subs))
+		if _, seen := tried[idx]; seen {
+			continue
+		}
+		tried[idx] = struct{}{}
+		file, err := pickRandomSnappyInDir(subs[idx])
+		if err == nil {
+			return file, true
+		}
+		if err != errNoSnappyInDir {
+			log.Printf("[storagemon] list %s: %v", subs[idx], err)
+		}
+	}
+	return "", false
+}
+
+// pickFromAllSubdirs scans every subdirectory when random picks all miss.
+func pickFromAllSubdirs(subs []string) (string, bool) {
+	order := distinctRandomIndices(len(subs), len(subs))
+	for _, idx := range order {
+		file, err := pickRandomSnappyInDir(subs[idx])
+		if err == nil {
+			return file, true
+		}
+		if err != errNoSnappyInDir {
+			log.Printf("[storagemon] list %s: %v", subs[idx], err)
+		}
+	}
+	return "", false
+}
+
+// pickRandomSnappyInDir returns one uniformly random .snappy file in dir using
+// reservoir sampling so we never materialize the full file list.
+func pickRandomSnappyInDir(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	var out []string
+	var chosen string
+	var count int
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		if strings.HasSuffix(strings.ToLower(e.Name()), ".snappy") {
-			out = append(out, filepath.Join(dir, e.Name()))
+		if !strings.HasSuffix(strings.ToLower(e.Name()), ".snappy") {
+			continue
+		}
+		count++
+		if count == 1 || randIntn(count) == 0 {
+			chosen = filepath.Join(dir, e.Name())
 		}
 	}
-	return out, nil
+	if count == 0 {
+		return "", errNoSnappyInDir
+	}
+	return chosen, nil
+}
+
+// distinctRandomIndices returns up to k distinct indices in [0, n).
+func distinctRandomIndices(n, k int) []int {
+	if k <= 0 || n <= 0 {
+		return nil
+	}
+	if k >= n {
+		out := make([]int, n)
+		for i := range out {
+			out[i] = i
+		}
+		shuffleInts(out)
+		return out
+	}
+	seen := make(map[int]struct{}, k)
+	for len(seen) < k {
+		seen[randIntn(n)] = struct{}{}
+	}
+	out := make([]int, 0, k)
+	for i := range seen {
+		out = append(out, i)
+	}
+	shuffleInts(out)
+	return out
 }
 
 // readFile reads the whole file, returning bytes read and any error. It does
 // not decode the snappy stream — the intent is to measure raw filesystem read
-// latency, not decompression cost.
+// latency, not decompression cost. On Linux, page cache is dropped before and
+// after the read so repeated samples of the same file still reflect storage I/O.
 func readFile(ctx context.Context, path string) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
+
+	fd := int(f.Fd())
+	dropPageCache(fd)
 
 	type result struct {
 		n   int64
@@ -234,6 +373,7 @@ func readFile(ctx context.Context, path string) (int64, error) {
 	done := make(chan result, 1)
 	go func() {
 		n, err := io.Copy(io.Discard, f)
+		dropPageCache(fd)
 		done <- result{n, err}
 	}()
 
@@ -272,7 +412,7 @@ func successAverage(samples []sample) (time.Duration, bool) {
 	return total / time.Duration(count), true
 }
 
-func shuffle(xs []string) {
+func shuffleInts(xs []int) {
 	for i := len(xs) - 1; i > 0; i-- {
 		j := randIntn(i + 1)
 		xs[i], xs[j] = xs[j], xs[i]
