@@ -88,6 +88,10 @@ func (t *LabelNode) InputSchema() map[string]any {
 }
 
 func (t *LabelNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "modify node labels"); err != nil {
+		return "", err
+	}
+
 	raw, _ := input["node"].(string)
 	key, _ := input["key"].(string)
 	value, _ := input["value"].(string)
@@ -169,6 +173,10 @@ func (t *UnlabelNode) InputSchema() map[string]any {
 }
 
 func (t *UnlabelNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "modify node labels"); err != nil {
+		return "", err
+	}
+
 	raw, _ := input["node"].(string)
 	key, _ := input["key"].(string)
 

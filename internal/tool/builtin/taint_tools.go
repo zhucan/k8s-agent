@@ -36,6 +36,18 @@ func isMasterNode(node *corev1.Node) bool {
 	return false
 }
 
+// checkCallerAllowed enforces the allowlist for mutating operations WITHOUT
+// requiring the target node object. Call this at the very top of any mutating
+// tool's Execute so unauthorized callers are rejected before any K8s API
+// lookups, node resolution, or side effects run.
+func checkCallerAllowed(ctx context.Context, opDesc string) error {
+	uid := authz.UserIDFrom(ctx)
+	if !authz.TaintAllowed(uid) {
+		return fmt.Errorf("permission denied: user %q is not allowed to %s (contact admin to be added to LARK_TAINT_ALLOWED_EMAILS)", uid, opDesc)
+	}
+	return nil
+}
+
 // checkNodeMutationPermission enforces shared invariants for mutating node
 // operations (taints, labels):
 //   - caller must be on the allowlist (LARK_TAINT_ALLOWED_EMAILS / _OPENIDS)
@@ -43,9 +55,8 @@ func isMasterNode(node *corev1.Node) bool {
 //
 // opDesc is used in the error message (e.g. "modify node taints").
 func checkNodeMutationPermission(ctx context.Context, node *corev1.Node, opDesc string) error {
-	uid := authz.UserIDFrom(ctx)
-	if !authz.TaintAllowed(uid) {
-		return fmt.Errorf("permission denied: user %q is not allowed to %s (contact admin to be added to LARK_TAINT_ALLOWED_EMAILS)", uid, opDesc)
+	if err := checkCallerAllowed(ctx, opDesc); err != nil {
+		return err
 	}
 	if isMasterNode(node) {
 		return fmt.Errorf("refused: node %s is a master/control-plane node — %s not permitted", node.Name, opDesc)
@@ -165,6 +176,10 @@ func (t *TaintNode) InputSchema() map[string]any {
 }
 
 func (t *TaintNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "modify node taints"); err != nil {
+		return "", err
+	}
+
 	raw, _ := input["node"].(string)
 	key, _ := input["key"].(string)
 	value, _ := input["value"].(string)
@@ -273,6 +288,10 @@ func (t *UntaintNode) InputSchema() map[string]any {
 }
 
 func (t *UntaintNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "modify node taints"); err != nil {
+		return "", err
+	}
+
 	raw, _ := input["node"].(string)
 	key, _ := input["key"].(string)
 	effectRaw, _ := input["effect"].(string)

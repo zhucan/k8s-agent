@@ -227,6 +227,10 @@ func (t *CordonNode) Description() string {
 func (t *CordonNode) InputSchema() map[string]any { return nodeArgSchema() }
 
 func (t *CordonNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "cordon node"); err != nil {
+		return "", err
+	}
+
 	raw, _ := input["node"].(string)
 	n, err := t.Nodes.Resolve(raw)
 	if err != nil {
@@ -236,6 +240,10 @@ func (t *CordonNode) Execute(ctx context.Context, input map[string]any) (string,
 	node, err := t.CS.CoreV1().Nodes().Get(ctx, n.Name, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("get node %s: %w", n.Name, err)
+	}
+
+	if err := checkNodeMutationPermission(ctx, node, "cordon node"); err != nil {
+		return "", err
 	}
 
 	if node.Spec.Unschedulable {
@@ -266,6 +274,10 @@ func (t *UncordonNode) Description() string {
 func (t *UncordonNode) InputSchema() map[string]any { return nodeArgSchema() }
 
 func (t *UncordonNode) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "uncordon node"); err != nil {
+		return "", err
+	}
+
 	raw, _ := input["node"].(string)
 	n, err := t.Nodes.Resolve(raw)
 	if err != nil {
@@ -275,6 +287,10 @@ func (t *UncordonNode) Execute(ctx context.Context, input map[string]any) (strin
 	node, err := t.CS.CoreV1().Nodes().Get(ctx, n.Name, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("get node %s: %w", n.Name, err)
+	}
+
+	if err := checkNodeMutationPermission(ctx, node, "uncordon node"); err != nil {
+		return "", err
 	}
 
 	if !node.Spec.Unschedulable {

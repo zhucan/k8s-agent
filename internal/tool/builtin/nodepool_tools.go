@@ -324,6 +324,10 @@ func (t *MoveNodeBetweenPools) InputSchema() map[string]any {
 }
 
 func (t *MoveNodeBetweenPools) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "move node between NodePools"); err != nil {
+		return "", err
+	}
+
 	rawNode, _ := input["node"].(string)
 	from, _ := input["from_pool"].(string)
 	to, _ := input["to_pool"].(string)
@@ -442,6 +446,10 @@ func (t *AddNodeToPool) InputSchema() map[string]any {
 }
 
 func (t *AddNodeToPool) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "add node to NodePool"); err != nil {
+		return "", err
+	}
+
 	pool, _ := input["pool"].(string)
 	rawNode, _ := input["node"].(string)
 	if strings.TrimSpace(pool) == "" {
@@ -535,6 +543,10 @@ func (t *RemoveNodeFromPool) InputSchema() map[string]any {
 }
 
 func (t *RemoveNodeFromPool) Execute(ctx context.Context, input map[string]any) (string, error) {
+	if err := checkCallerAllowed(ctx, "remove node from NodePool"); err != nil {
+		return "", err
+	}
+
 	pool, _ := input["pool"].(string)
 	rawNode, _ := input["node"].(string)
 	if strings.TrimSpace(pool) == "" {
