@@ -21,7 +21,6 @@ import (
 	"github.com/k8s-inspect/internal/authz"
 	"github.com/k8s-inspect/internal/bot"
 	larkctl "github.com/k8s-inspect/internal/lark"
-	"github.com/k8s-inspect/internal/storagemon"
 )
 
 var (
@@ -127,8 +126,6 @@ func main() {
 			LarkClient:    larkClient,
 			ClusterMgr:    components.ClusterManager,
 		})
-
-		startStorageMonitor(ctx, appID, appSecret, alertChatID)
 	}
 
 	// Create event dispatcher (parameters must be empty strings)
@@ -166,87 +163,6 @@ func main() {
 func handleBotAddedEvent(ctx context.Context, event *larkim.P2ChatMemberBotAddedV1) error {
 	log.Printf("Bot added to chat: %v", event)
 	return nil
-}
-
-// startStorageMonitor parses LARK_STORAGE_MON_* env vars and launches the
-// per-directory sampler goroutines. The mention list is intentionally separate
-// from LARK_ALERT_MENTION_EMAILS so the storage on-call rotation can be routed
-// independently of the cluster health alert.
-func startStorageMonitor(ctx context.Context, appID, appSecret, alertChatID string) {
-	raw := strings.TrimSpace(os.Getenv("LARK_STORAGE_MON_TARGETS"))
-	if raw == "" {
-		log.Println("[storagemon] LARK_STORAGE_MON_TARGETS not set, skipping")
-		return
-	}
-	targets, err := storagemon.ParseTargets(raw)
-	if err != nil {
-		log.Printf("[storagemon] invalid LARK_STORAGE_MON_TARGETS: %v", err)
-		return
-	}
-	if alertChatID == "" {
-		log.Println("[storagemon] LARK_ALERT_CHAT_ID not set, skipping")
-		return
-	}
-
-	interval := parseDurationOr("LARK_STORAGE_MON_INTERVAL", 5*time.Second)
-	window := parseDurationOr("LARK_STORAGE_MON_WINDOW", 30*time.Minute)
-	cooldown := parseDurationOr("LARK_STORAGE_MON_COOLDOWN", 30*time.Minute)
-
-	var mentionIDs []string
-	if raw := strings.TrimSpace(os.Getenv("LARK_STORAGE_MON_MENTION_EMAILS")); raw != "" {
-		emails := splitCSV(raw)
-		if len(emails) > 0 {
-			resolveCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			ids, unresolved, err := larkctl.ResolveOpenIDsByEmail(resolveCtx, appID, appSecret, emails)
-			cancel()
-			if err != nil {
-				log.Printf("[storagemon] resolve mention emails: %v", err)
-			} else {
-				mentionIDs = ids
-				log.Printf("[storagemon] mention: resolved %d/%d email(s) → open_id", len(emails)-len(unresolved), len(emails))
-				if len(unresolved) > 0 {
-					log.Printf("[storagemon] warn: unresolved emails: %s", strings.Join(unresolved, ", "))
-				}
-			}
-		}
-	}
-	if raw := strings.TrimSpace(os.Getenv("LARK_STORAGE_MON_MENTION_OPENIDS")); raw != "" {
-		mentionIDs = append(mentionIDs, splitCSV(raw)...)
-	}
-
-	storagemon.Start(ctx, storagemon.Config{
-		Targets:        targets,
-		SampleInterval: interval,
-		Window:         window,
-		AlertCooldown:  cooldown,
-		ChatID:         alertChatID,
-		MentionIDs:     mentionIDs,
-		LarkClient:     larkClient,
-	})
-}
-
-func parseDurationOr(key string, def time.Duration) time.Duration {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		log.Printf("[storagemon] invalid %s=%q, using default %s", key, v, def)
-		return def
-	}
-	return d
-}
-
-func splitCSV(raw string) []string {
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // handleMessageEvent handles incoming message events.
