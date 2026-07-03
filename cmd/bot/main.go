@@ -131,7 +131,13 @@ func main() {
 	// Create event dispatcher (parameters must be empty strings)
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(handleMessageEvent).
-		OnP2ChatMemberBotAddedV1(handleBotAddedEvent)
+		OnP2ChatMemberBotAddedV1(handleBotAddedEvent).
+		OnP2MessageReactionCreatedV1(func(ctx context.Context, event *larkim.P2MessageReactionCreatedV1) error {
+			return nil
+		}).
+		OnP2MessageReactionDeletedV1(func(ctx context.Context, event *larkim.P2MessageReactionDeletedV1) error {
+			return nil
+		})
 
 	// Create WebSocket long-connection client
 	wsClient := larkws.NewClient(appID, appSecret,
@@ -215,6 +221,10 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 
 	trimmedText := strings.TrimSpace(text)
 
+	// Show a typing-hands reaction while we work. Removed after reply is sent.
+	reactionID := addTypingReaction(ctx, *msg.MessageId)
+	defer removeTypingReaction(ctx, *msg.MessageId, reactionID)
+
 	// Handle the incoming query
 	log.Printf("[lark] Processing query: %q", text)
 	runCtx, cancel := context.WithTimeout(ctx, 10 * time.Minute)
@@ -288,6 +298,57 @@ func sendReply(ctx context.Context, msg *larkim.EventMessage, reply string) {
 		log.Printf("[lark] Reply error: %v", replyErr)
 	} else {
 		log.Println("[lark] Reply sent successfully")
+	}
+}
+
+// addTypingReaction adds a "typing" emoji reaction to the user's message so
+// the sender sees the bot is working. Returns the reaction ID (empty on
+// failure — non-fatal). Feishu's emoji_type "Typing" is the keyboard-typing
+// indicator (case-sensitive per docs).
+func addTypingReaction(ctx context.Context, messageID string) string {
+	if larkClient == nil || messageID == "" {
+		return ""
+	}
+	resp, err := larkClient.Im.MessageReaction.Create(ctx,
+		larkim.NewCreateMessageReactionReqBuilder().
+			MessageId(messageID).
+			Body(larkim.NewCreateMessageReactionReqBodyBuilder().
+				ReactionType(larkim.NewEmojiBuilder().EmojiType("Typing").Build()).
+				Build()).
+			Build())
+	if err != nil {
+		log.Printf("[lark] add typing reaction: %v", err)
+		return ""
+	}
+	if !resp.Success() {
+		log.Printf("[lark] add typing reaction: code=%d msg=%s", resp.Code, resp.Msg)
+		return ""
+	}
+	if resp.Data == nil || resp.Data.ReactionId == nil {
+		log.Printf("[lark] add typing reaction: no reaction_id in response")
+		return ""
+	}
+	log.Printf("[lark] typing reaction added: %s", *resp.Data.ReactionId)
+	return *resp.Data.ReactionId
+}
+
+// removeTypingReaction removes the earlier typing-hands reaction so the
+// indicator disappears once the reply is delivered.
+func removeTypingReaction(ctx context.Context, messageID, reactionID string) {
+	if larkClient == nil || messageID == "" || reactionID == "" {
+		return
+	}
+	resp, err := larkClient.Im.MessageReaction.Delete(ctx,
+		larkim.NewDeleteMessageReactionReqBuilder().
+			MessageId(messageID).
+			ReactionId(reactionID).
+			Build())
+	if err != nil {
+		log.Printf("[lark] remove typing reaction: %v", err)
+		return
+	}
+	if !resp.Success() {
+		log.Printf("[lark] remove typing reaction: code=%d msg=%s", resp.Code, resp.Msg)
 	}
 }
 

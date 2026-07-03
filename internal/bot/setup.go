@@ -270,6 +270,8 @@ func setupMultiCluster(parent context.Context, opts Options) *Components {
 	tr.Register(newDynamicAnalyzePodLogs(mgr))
 	// GPU inspection
 	tr.Register(&builtin.GPUInspect{Manager: mgr})
+	// Cluster-wide CPU/memory/GPU totals (skips master/monitor; GPU nodes only count GPU cards)
+	tr.Register(&builtin.ClusterResources{Manager: mgr})
 	// NodePool CRD
 	tr.Register(newDynamicListNodePools(mgr))
 	tr.Register(newDynamicGetNodePool(mgr))
