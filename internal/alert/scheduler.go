@@ -111,9 +111,15 @@ func runHealthCheck(ctx context.Context, cfg Config) {
 		}
 
 		cr := clusterResult{Name: info.Name, Total: len(nodeList.Items)}
+		isVKE := info.Name == "volc-vke"
 
 		for i := range nodeList.Items {
 			node := &nodeList.Items[i]
+
+			if isVKE && isMonitorNode(node) {
+				cr.Total--
+				continue
+			}
 
 			ready := false
 			for _, cond := range node.Status.Conditions {
@@ -176,6 +182,9 @@ func runHealthCheck(ctx context.Context, cfg Config) {
 			for i := range gpuNodeList.Items {
 				node := &gpuNodeList.Items[i]
 				if unhealthySet[node.Name] {
+					continue
+				}
+				if isVKE && isMonitorNode(node) {
 					continue
 				}
 				if skipGPUInspect(node, info.Name) {
@@ -389,6 +398,16 @@ func isEmbeddedGPUNode(node *corev1.Node) bool {
 		}
 	}
 	if ut := strings.ToLower(node.Labels["deeproute.cn/user-type"]); strings.Contains(ut, "desay") {
+		return true
+	}
+	return false
+}
+
+func isMonitorNode(node *corev1.Node) bool {
+	if _, ok := node.Labels["node-role.kubernetes.io/monitor"]; ok {
+		return true
+	}
+	if ut := strings.ToLower(node.Labels["deeproute.cn/user-type"]); strings.Contains(ut, "monitor") {
 		return true
 	}
 	return false
