@@ -22,12 +22,13 @@ const (
 )
 
 type Client struct {
-	api              anthropic.Client
-	tools            *tool.Registry
-	system           string
-	systemGenerator  func() string // callback for dynamically generating the system prompt
-	model            anthropic.Model
-	enableCache      bool
+	api             anthropic.Client
+	tools           *tool.Registry
+	system          string
+	systemGenerator func() string // callback for dynamically generating the system prompt
+	model           anthropic.Model
+	enableCache     bool
+	history         *historyStore
 }
 
 // New constructs a Client.
@@ -70,6 +71,7 @@ func New(apiKey, systemPrompt string, reg *tool.Registry) *Client {
 		system:      systemPrompt,
 		model:       model,
 		enableCache: enableCache,
+		history:     newHistoryStore(),
 	}
 }
 
@@ -87,12 +89,12 @@ func getModelFromEnv() anthropic.Model {
 
 	// Supported model mapping
 	models := map[string]anthropic.Model{
-		"claude-opus-4-7":            anthropic.ModelClaudeOpus4_7,
-		"claude-sonnet-4-6":          anthropic.ModelClaudeSonnet4_6,
-		"claude-haiku-4-5":           anthropic.ModelClaudeHaiku4_5,
-		"claude-haiku-4-5-20251001":  anthropic.ModelClaudeHaiku4_5_20251001,
-		"claude-opus-4-6":            anthropic.ModelClaudeOpus4_6,
-		"claude-3-haiku-20240307":    anthropic.ModelClaude_3_Haiku_20240307,
+		"claude-opus-4-7":           anthropic.ModelClaudeOpus4_7,
+		"claude-sonnet-4-6":         anthropic.ModelClaudeSonnet4_6,
+		"claude-haiku-4-5":          anthropic.ModelClaudeHaiku4_5,
+		"claude-haiku-4-5-20251001": anthropic.ModelClaudeHaiku4_5_20251001,
+		"claude-opus-4-6":           anthropic.ModelClaudeOpus4_6,
+		"claude-3-haiku-20240307":   anthropic.ModelClaude_3_Haiku_20240307,
 	}
 
 	if model, ok := models[modelStr]; ok {
@@ -105,7 +107,16 @@ func getModelFromEnv() anthropic.Model {
 }
 
 // Run executes one conversation turn and returns the final text reply.
-func (c *Client) Run(ctx context.Context, userText string) (string, error) {
+// Turns sharing the same non-empty sessionKey see earlier turns as context.
+func (c *Client) Run(ctx context.Context, sessionKey, userText string) (string, error) {
+	reply, err := c.run(ctx, c.history.get(sessionKey), userText)
+	if err == nil {
+		c.history.append(sessionKey, userText, reply)
+	}
+	return reply, err
+}
+
+func (c *Client) run(ctx context.Context, history []anthropic.MessageParam, userText string) (string, error) {
 	tools := buildToolParams(c.tools)
 
 	// Dynamically generate the system prompt (used in multi-cluster mode)
@@ -117,20 +128,17 @@ func (c *Client) Run(ctx context.Context, userText string) (string, error) {
 	// Check if the system+tools workaround is needed (some API proxies don't support the combination)
 	useSystemWorkaround := os.Getenv("ANTHROPIC_SYSTEM_WORKAROUND") == "true"
 
-	var messages []anthropic.MessageParam
+	messages := history
 	if useSystemWorkaround {
-		// Workaround: inject the system prompt as the first user message
-		messages = []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(
-				"<system>\n" + systemPrompt + "\n</system>\n\n" + userText,
-			)),
-		}
+		// Workaround: inject the system prompt into the current user message
+		messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock(
+			"<system>\n"+systemPrompt+"\n</system>\n\n"+userText,
+		)))
 		log.Printf("[LLM] Using system prompt workaround (system in user message)")
 	} else {
-		messages = []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(userText)),
-		}
+		messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock(userText)))
 	}
+	log.Printf("[LLM] Context: %d prior messages", len(history))
 
 	for i := 0; i < maxIter; i++ {
 		log.Printf("[LLM] Sending request to model %s (iteration %d/%d)", c.model, i+1, maxIter)

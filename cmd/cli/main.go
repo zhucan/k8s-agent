@@ -223,10 +223,10 @@ func main() {
 }
 
 func runOne(c *bot.Components, q string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	start := time.Now()
-	reply, err := c.LLM.Run(ctx, q)
+	reply, err := c.LLM.Run(ctx, "cli", q)
 	elapsed := time.Since(start)
 	if err != nil {
 		log.Printf("❌ error: %v", err)
@@ -605,4 +605,3 @@ func showToolHelpCLI(c *bot.Components, toolName string) string {
 
 	return result.String()
 }
-

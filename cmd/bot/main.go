@@ -227,7 +227,7 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 
 	// Handle the incoming query
 	log.Printf("[lark] Processing query: %q", text)
-	runCtx, cancel := context.WithTimeout(ctx, 10 * time.Minute)
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
 	// Attach caller identity for permission-sensitive tools (e.g. taint_node).
@@ -248,7 +248,7 @@ func handleMessageEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) e
 		reply, llmErr = processDirectToolCommand(runCtx, text)
 	} else if components.LLM != nil {
 		// Natural language — route through LLM
-		reply, llmErr = components.LLM.Run(runCtx, text)
+		reply, llmErr = components.LLM.Run(runCtx, sessionKey(msg), text)
 	} else {
 		// No LLM available — prompt user to use command format
 		reply = "❌ Unrecognized command\n\nUse tool command format: <tool_name> [json_input]\nType 'help' to see all available tools"
@@ -291,6 +291,7 @@ func sendReply(ctx context.Context, msg *larkim.EventMessage, reply string) {
 		Body(larkim.NewReplyMessageReqBodyBuilder().
 			MsgType(msgType).
 			Content(content).
+			ReplyInThread(true).
 			Build()).
 		Build())
 
@@ -299,6 +300,16 @@ func sendReply(ctx context.Context, msg *larkim.EventMessage, reply string) {
 	} else {
 		log.Println("[lark] Reply sent successfully")
 	}
+}
+
+// sessionKey identifies the conversation a message belongs to. A thread created by
+// replying to message M has root_id == M, so the first question and its follow-ups
+// in the thread share the same key.
+func sessionKey(msg *larkim.EventMessage) string {
+	if msg.RootId != nil && *msg.RootId != "" {
+		return *msg.RootId
+	}
+	return *msg.MessageId
 }
 
 // addTypingReaction adds a "typing" emoji reaction to the user's message so
@@ -468,13 +479,13 @@ func detectHeader(reply string) (string, string) {
 
 	// Map leading emoji to card color theme
 	headers := map[string]string{
-		"📋": "blue",
-		"📊": "blue",
-		"🌐": "blue",
-		"📦": "blue",
-		"📁": "blue",
-		"✅": "green",
-		"❌": "red",
+		"📋":  "blue",
+		"📊":  "blue",
+		"🌐":  "blue",
+		"📦":  "blue",
+		"📁":  "blue",
+		"✅":  "green",
+		"❌":  "red",
 		"⚠️": "orange",
 	}
 
@@ -791,4 +802,3 @@ func showToolHelp(toolName string) string {
 
 	return result.String()
 }
-
